@@ -41,7 +41,11 @@ fn full_lock_unlock_cycle() {
     mgr.lock(1, &lock_policy()).unwrap();
     assert!(mgr.is_locked(1));
 
-    let req = AuthRequest { session_id: 1, user_name: "alice".into(), password: "hunter2".into() };
+    let req = AuthRequest {
+        session_id: 1,
+        user_name: "alice".into(),
+        password: "hunter2".into(),
+    };
     let outcome = mgr.attempt_unlock(&AlwaysSucceed, &req, &auth_policy(), Instant::now());
     assert_eq!(outcome, AuthOutcome::Success);
     assert!(!mgr.is_locked(1));
@@ -61,7 +65,11 @@ fn inhibitor_blocks_lock_and_release_restores_it() {
 fn lockout_after_max_failed_attempts_blocks_further_tries() {
     let mut mgr = LockManager::new();
     mgr.lock(1, &lock_policy()).unwrap();
-    let req = AuthRequest { session_id: 1, user_name: "alice".into(), password: "wrong".into() };
+    let req = AuthRequest {
+        session_id: 1,
+        user_name: "alice".into(),
+        password: "wrong".into(),
+    };
     let policy = auth_policy();
 
     mgr.attempt_unlock(&AlwaysFail, &req, &policy, Instant::now());

@@ -26,7 +26,9 @@ impl Seat {
 
     /// All sessions associated with this seat, active one first.
     pub fn sessions(&self) -> impl Iterator<Item = SessionId> + '_ {
-        self.active_session.into_iter().chain(self.queued_sessions.iter().copied())
+        self.active_session
+            .into_iter()
+            .chain(self.queued_sessions.iter().copied())
     }
 
     pub fn has_session(&self, id: SessionId) -> bool {

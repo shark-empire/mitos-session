@@ -3,7 +3,9 @@
 //! running calloop loop to exercise meaningfully and is covered by
 //! manual/hardware testing per README's roadmap rather than here.
 
-use mitos_session::ipc::{peer_credentials, read_message, write_message, Message, Request, Response};
+use mitos_session::ipc::{
+    peer_credentials, read_message, write_message, Message, Request, Response,
+};
 use std::os::unix::net::UnixStream;
 
 #[test]
@@ -24,7 +26,10 @@ fn a_closed_connection_is_reported_as_disconnected_not_a_generic_error() {
     let (a, mut b) = UnixStream::pair().unwrap();
     drop(a);
     let result = read_message::<_, Request>(&mut b);
-    assert!(matches!(result, Err(mitos_session::errors::SessionError::Disconnected)));
+    assert!(matches!(
+        result,
+        Err(mitos_session::errors::SessionError::Disconnected)
+    ));
 }
 
 #[test]

@@ -22,21 +22,45 @@ pub enum Request {
         session_type: Option<String>,
     },
     /// End a session outright (logout), as opposed to `LockSession`.
-    TerminateSession { session_id: SessionId },
+    TerminateSession {
+        session_id: SessionId,
+    },
     /// Register this connection as the compositor responsible for a
     /// session. Required before the connection will receive `Event`s
     /// for that session (lock screen show/hide, dim, etc).
-    RegisterCompositor { session_id: SessionId },
+    RegisterCompositor {
+        session_id: SessionId,
+    },
     ListSessions,
-    SessionStatus { session_id: SessionId },
-    LockSession { session_id: SessionId },
-    Unlock { session_id: SessionId, user_name: String, password: String },
+    SessionStatus {
+        session_id: SessionId,
+    },
+    LockSession {
+        session_id: SessionId,
+    },
+    Unlock {
+        session_id: SessionId,
+        user_name: String,
+        password: String,
+    },
     /// Coalesced "input happened" ping -- resets the idle timer for a
     /// seat. Sent by the compositor, never carries raw input events.
-    ReportActivity { seat_id: String },
-    SwitchSession { seat_id: String, session_id: SessionId },
-    Inhibit { what: InhibitWhat, who: String, why: String, mode: InhibitMode },
-    ReleaseInhibit { inhibit_id: u64 },
+    ReportActivity {
+        seat_id: String,
+    },
+    SwitchSession {
+        seat_id: String,
+        session_id: SessionId,
+    },
+    Inhibit {
+        what: InhibitWhat,
+        who: String,
+        why: String,
+        mode: InhibitMode,
+    },
+    ReleaseInhibit {
+        inhibit_id: u64,
+    },
     ListInhibitors,
     Suspend,
     Reboot,
@@ -61,14 +85,29 @@ pub enum Response {
 /// but never decides on its own to lock or unlock anything.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
-    ShowLockScreen { session_id: SessionId, reason: LockReason },
-    HideLockScreen { session_id: SessionId },
-    AuthFeedback { session_id: SessionId, outcome: AuthOutcome },
-    Dim { seat_id: String },
-    Undim { seat_id: String },
+    ShowLockScreen {
+        session_id: SessionId,
+        reason: LockReason,
+    },
+    HideLockScreen {
+        session_id: SessionId,
+    },
+    AuthFeedback {
+        session_id: SessionId,
+        outcome: AuthOutcome,
+    },
+    Dim {
+        seat_id: String,
+    },
+    Undim {
+        seat_id: String,
+    },
     PrepareForSleep,
     ResumedFromSleep,
-    SessionActivated { seat_id: String, session_id: SessionId },
+    SessionActivated {
+        seat_id: String,
+        session_id: SessionId,
+    },
 }
 
 /// Everything the server ever writes to a connection: either a direct

@@ -22,7 +22,10 @@ pub struct AuditEvent {
 impl AuditEvent {
     pub fn new(actor_uid: u32, action: impl Into<String>, outcome: impl Into<String>) -> Self {
         Self {
-            timestamp_unix: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            timestamp_unix: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             actor_uid,
             action: action.into(),
             target: None,
@@ -52,7 +55,10 @@ pub fn configure_audit_log(settings: &LoggingSettings) {
 pub fn audit_log(event: AuditEvent) {
     let path = AUDIT_PATH.lock().ok().and_then(|g| g.clone());
     let Some(path) = path else {
-        tracing::warn!(?event, "audit log not configured; logging event via tracing instead");
+        tracing::warn!(
+            ?event,
+            "audit log not configured; logging event via tracing instead"
+        );
         return;
     };
 

@@ -34,7 +34,10 @@ impl IdleDetector {
         for seat_id in seat_ids {
             let idle_for = self.tracker.idle_for(&seat_id, now);
             let new_stage = policy.stage_for(idle_for);
-            let entry = self.stage.entry(seat_id.clone()).or_insert(IdleStage::Active);
+            let entry = self
+                .stage
+                .entry(seat_id.clone())
+                .or_insert(IdleStage::Active);
             if *entry != new_stage {
                 *entry = new_stage;
                 changes.push((seat_id, new_stage));
@@ -44,7 +47,10 @@ impl IdleDetector {
     }
 
     pub fn stage(&self, seat_id: &str) -> IdleStage {
-        self.stage.get(seat_id).copied().unwrap_or(IdleStage::Active)
+        self.stage
+            .get(seat_id)
+            .copied()
+            .unwrap_or(IdleStage::Active)
     }
 }
 
@@ -68,13 +74,18 @@ mod tests {
         let t0 = Instant::now();
         detector.record_activity("seat0", t0);
 
-        assert!(detector.tick(t0 + Duration::from_secs(5), &policy).is_empty());
+        assert!(detector
+            .tick(t0 + Duration::from_secs(5), &policy)
+            .is_empty());
 
         let changes = detector.tick(t0 + Duration::from_secs(11), &policy);
         assert_eq!(changes, vec![("seat0".to_string(), IdleStage::Dimmed)]);
 
         let changes = detector.tick(t0 + Duration::from_secs(21), &policy);
-        assert_eq!(changes, vec![("seat0".to_string(), IdleStage::LockRequested)]);
+        assert_eq!(
+            changes,
+            vec![("seat0".to_string(), IdleStage::LockRequested)]
+        );
     }
 
     #[test]

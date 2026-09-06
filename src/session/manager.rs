@@ -33,7 +33,11 @@ impl SessionManager {
         session_type: SessionType,
         settings: &SessionSettings,
     ) -> Result<SessionId> {
-        let existing = self.sessions.values().filter(|c| c.user.uid == user.uid).count() as u32;
+        let existing = self
+            .sessions
+            .values()
+            .filter(|c| c.user.uid == user.uid)
+            .count() as u32;
         if existing >= settings.max_sessions_per_user {
             return Err(SessionError::PermissionDenied(format!(
                 "{} already has {existing} session(s) open (limit {})",
@@ -50,16 +54,23 @@ impl SessionManager {
     }
 
     pub fn terminate_session(&mut self, id: SessionId) -> Result<()> {
-        let mut ctx = self.sessions.remove(&id).ok_or(SessionError::UnknownSession(id))?;
+        let mut ctx = self
+            .sessions
+            .remove(&id)
+            .ok_or(SessionError::UnknownSession(id))?;
         lifecycle::end(&mut ctx)
     }
 
     pub fn get(&self, id: SessionId) -> Result<&SessionContext> {
-        self.sessions.get(&id).ok_or(SessionError::UnknownSession(id))
+        self.sessions
+            .get(&id)
+            .ok_or(SessionError::UnknownSession(id))
     }
 
     pub fn get_mut(&mut self, id: SessionId) -> Result<&mut SessionContext> {
-        self.sessions.get_mut(&id).ok_or(SessionError::UnknownSession(id))
+        self.sessions
+            .get_mut(&id)
+            .ok_or(SessionError::UnknownSession(id))
     }
 
     pub fn list(&self) -> impl Iterator<Item = &SessionContext> {
@@ -107,7 +118,11 @@ mod tests {
             ..Default::default()
         };
         let user = fake_user("alice", 1000);
-        let existing = mgr.sessions.values().filter(|c| c.user.uid == user.uid).count() as u32;
+        let existing = mgr
+            .sessions
+            .values()
+            .filter(|c| c.user.uid == user.uid)
+            .count() as u32;
         assert!(existing >= settings.max_sessions_per_user);
     }
 }

@@ -35,7 +35,12 @@ fn create_and_terminate_session() {
     let mut mgr = SessionManager::new();
 
     let id = mgr
-        .create_session(fake_user(&tmp.path().join("home")), "seat0", SessionType::Wayland, &settings)
+        .create_session(
+            fake_user(&tmp.path().join("home")),
+            "seat0",
+            SessionType::Wayland,
+            &settings,
+        )
         .expect("session should be created");
 
     let ctx = mgr.get(id).unwrap();
@@ -53,9 +58,19 @@ fn respects_max_sessions_per_user() {
     settings.max_sessions_per_user = 1;
     let mut mgr = SessionManager::new();
 
-    mgr.create_session(fake_user(&tmp.path().join("home")), "seat0", SessionType::Wayland, &settings)
-        .unwrap();
-    let second = mgr.create_session(fake_user(&tmp.path().join("home")), "seat0", SessionType::Wayland, &settings);
+    mgr.create_session(
+        fake_user(&tmp.path().join("home")),
+        "seat0",
+        SessionType::Wayland,
+        &settings,
+    )
+    .unwrap();
+    let second = mgr.create_session(
+        fake_user(&tmp.path().join("home")),
+        "seat0",
+        SessionType::Wayland,
+        &settings,
+    );
     assert!(second.is_err());
 }
 

@@ -17,7 +17,11 @@ pub fn poweroff(sessions: &mut SessionManager, locks: &LockManager, grace: Durat
         ));
     }
 
-    let delayers: Vec<String> = locks.inhibitors.delays(InhibitWhat::Shutdown).map(|i| i.who.clone()).collect();
+    let delayers: Vec<String> = locks
+        .inhibitors
+        .delays(InhibitWhat::Shutdown)
+        .map(|i| i.who.clone())
+        .collect();
     if !delayers.is_empty() {
         tracing::info!(?delayers, ?grace, "waiting for shutdown-delay inhibitors");
         thread::sleep(grace);

@@ -70,9 +70,12 @@ impl Application {
         unsafe {
             use std::os::unix::process::CommandExt;
             cmd.pre_exec(move || {
-                nix::unistd::setgroups(&gids).map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
-                nix::unistd::setgid(gid).map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
-                nix::unistd::setuid(uid).map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
+                nix::unistd::setgroups(&gids)
+                    .map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
+                nix::unistd::setgid(gid)
+                    .map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
+                nix::unistd::setuid(uid)
+                    .map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
                 Ok(())
             });
         }

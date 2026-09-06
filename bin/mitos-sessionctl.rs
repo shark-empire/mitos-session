@@ -126,20 +126,47 @@ fn run(cli: Cli) -> Result<()> {
     let request = match cli.command {
         Command::ListSessions => Request::ListSessions,
         Command::Status { session_id } => Request::SessionStatus { session_id },
-        Command::CreateSession { user_name, seat, session_type } => {
-            Request::CreateSession { user_name, seat_id: seat, session_type }
-        }
+        Command::CreateSession {
+            user_name,
+            seat,
+            session_type,
+        } => Request::CreateSession {
+            user_name,
+            seat_id: seat,
+            session_type,
+        },
         Command::Terminate { session_id } => Request::TerminateSession { session_id },
         Command::Lock { session_id } => Request::LockSession { session_id },
-        Command::Unlock { session_id, user_name } => {
+        Command::Unlock {
+            session_id,
+            user_name,
+        } => {
             let password = read_password()?;
-            Request::Unlock { session_id, user_name, password }
+            Request::Unlock {
+                session_id,
+                user_name,
+                password,
+            }
         }
         Command::Activity { seat_id } => Request::ReportActivity { seat_id },
-        Command::Switch { seat_id, session_id } => Request::SwitchSession { seat_id, session_id },
-        Command::Inhibit { what, who, why, mode } => {
-            Request::Inhibit { what: what.into(), who, why, mode: mode.into() }
-        }
+        Command::Switch {
+            seat_id,
+            session_id,
+        } => Request::SwitchSession {
+            seat_id,
+            session_id,
+        },
+        Command::Inhibit {
+            what,
+            who,
+            why,
+            mode,
+        } => Request::Inhibit {
+            what: what.into(),
+            who,
+            why,
+            mode: mode.into(),
+        },
         Command::ReleaseInhibit { inhibit_id } => Request::ReleaseInhibit { inhibit_id },
         Command::ListInhibitors => Request::ListInhibitors,
         Command::Suspend => Request::Suspend,
@@ -183,7 +210,11 @@ fn print_response(response: Response) {
             println!("user:    {} (uid {})", s.user_name, s.uid);
             println!("seat:    {}", s.seat_id);
             println!("type:    {:?}", s.session_type);
-            println!("state:   {}{}", s.state, if s.locked { " (locked)" } else { "" });
+            println!(
+                "state:   {}{}",
+                s.state,
+                if s.locked { " (locked)" } else { "" }
+            );
         }
         Response::AuthResult(outcome) => println!("{outcome:?}"),
         Response::InhibitGranted { inhibit_id } => println!("inhibitor {inhibit_id} granted"),

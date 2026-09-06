@@ -13,6 +13,9 @@ pub struct InputDevice {
 
 impl InputDevice {
     pub fn is_pointer_or_keyboard(&self) -> bool {
-        matches!(self.device.kind, DeviceKind::Keyboard | DeviceKind::Pointer | DeviceKind::Touch)
+        matches!(
+            self.device.kind,
+            DeviceKind::Keyboard | DeviceKind::Pointer | DeviceKind::Touch
+        )
     }
 }

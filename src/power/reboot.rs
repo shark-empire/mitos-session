@@ -14,7 +14,11 @@ pub fn reboot(sessions: &mut SessionManager, locks: &LockManager, grace: Duratio
         ));
     }
 
-    let delayers: Vec<String> = locks.inhibitors.delays(InhibitWhat::Shutdown).map(|i| i.who.clone()).collect();
+    let delayers: Vec<String> = locks
+        .inhibitors
+        .delays(InhibitWhat::Shutdown)
+        .map(|i| i.who.clone())
+        .collect();
     if !delayers.is_empty() {
         thread::sleep(grace);
     }

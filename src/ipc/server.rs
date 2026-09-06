@@ -24,9 +24,15 @@ pub struct ManagerCommand {
 /// keep `ConnRegistry` (and "was this the compositor for session N?"
 /// bookkeeping) in sync without a separate out-of-band channel.
 pub enum ManagerMessage {
-    Connected { conn_id: ConnId, peer: PeerCred, outbox: mpsc::Sender<Message> },
+    Connected {
+        conn_id: ConnId,
+        peer: PeerCred,
+        outbox: mpsc::Sender<Message>,
+    },
     Command(ManagerCommand),
-    Disconnected { conn_id: ConnId },
+    Disconnected {
+        conn_id: ConnId,
+    },
 }
 
 /// Maps a live connection to the channel that feeds its writer thread.
@@ -127,7 +133,11 @@ fn handle_connection(stream: UnixStream, cmd_tx: LoopSender<ManagerMessage>) {
     // immediate reply can never race ahead of this connection existing
     // in `ConnRegistry`.
     if cmd_tx
-        .send(ManagerMessage::Connected { conn_id, peer, outbox: out_tx.clone() })
+        .send(ManagerMessage::Connected {
+            conn_id,
+            peer,
+            outbox: out_tx.clone(),
+        })
         .is_err()
     {
         return; // daemon is shutting down
@@ -144,7 +154,11 @@ fn handle_connection(stream: UnixStream, cmd_tx: LoopSender<ManagerMessage>) {
     loop {
         match read_message::<_, Request>(&mut reader) {
             Ok(request) => {
-                let cmd = ManagerCommand { conn_id, peer, request };
+                let cmd = ManagerCommand {
+                    conn_id,
+                    peer,
+                    request,
+                };
                 if cmd_tx.send(ManagerMessage::Command(cmd)).is_err() {
                     break;
                 }

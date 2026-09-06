@@ -42,7 +42,11 @@ impl LockTimeouts {
     }
 
     fn drain_expired(map: &mut HashMap<SessionId, Instant>, now: Instant) -> Vec<SessionId> {
-        let expired: Vec<SessionId> = map.iter().filter(|&(_, &t)| t <= now).map(|(&id, _)| id).collect();
+        let expired: Vec<SessionId> = map
+            .iter()
+            .filter(|&(_, &t)| t <= now)
+            .map(|(&id, _)| id)
+            .collect();
         for id in &expired {
             map.remove(id);
         }
@@ -60,9 +64,13 @@ mod tests {
         let t0 = Instant::now();
         timeouts.start_grace(1, t0, Duration::from_secs(5));
 
-        assert!(timeouts.expired_grace(t0 + Duration::from_secs(3)).is_empty());
+        assert!(timeouts
+            .expired_grace(t0 + Duration::from_secs(3))
+            .is_empty());
         assert_eq!(timeouts.expired_grace(t0 + Duration::from_secs(6)), vec![1]);
         // Already drained -- doesn't fire again.
-        assert!(timeouts.expired_grace(t0 + Duration::from_secs(10)).is_empty());
+        assert!(timeouts
+            .expired_grace(t0 + Duration::from_secs(10))
+            .is_empty());
     }
 }

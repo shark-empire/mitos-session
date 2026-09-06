@@ -18,7 +18,12 @@ pub enum SignalEvent {
 /// `signalfd`-backed source (so handling happens on the daemon's
 /// normal thread, with none of the usual async-signal-safety limits
 /// of a real signal handler).
-pub const WATCHED: &[Signal] = &[Signal::SIGTERM, Signal::SIGINT, Signal::SIGHUP, Signal::SIGCHLD];
+pub const WATCHED: &[Signal] = &[
+    Signal::SIGTERM,
+    Signal::SIGINT,
+    Signal::SIGHUP,
+    Signal::SIGCHLD,
+];
 
 /// Map a raw signal to what it means here. `None` for anything not in
 /// `WATCHED` (shouldn't happen, but a signal source misconfiguration

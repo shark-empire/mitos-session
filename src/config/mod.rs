@@ -9,5 +9,5 @@ mod settings;
 pub use loader::load;
 pub use settings::{
     AuthSettings, IdleSettings, IpcSettings, LockSettings, LoggingSettings, PowerSettings,
-    SeatSettings, Settings, SessionSettings,
+    SeatSettings, SessionSettings, Settings,
 };

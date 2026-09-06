@@ -44,7 +44,9 @@ pub fn read_message<R: Read, T: DeserializeOwned>(reader: &mut R) -> Result<T> {
 
     let len = u32::from_le_bytes(len_buf);
     if len > MAX_MESSAGE_LEN {
-        return Err(SessionError::Protocol(format!("message of {len} bytes exceeds the {MAX_MESSAGE_LEN} byte limit")));
+        return Err(SessionError::Protocol(format!(
+            "message of {len} bytes exceeds the {MAX_MESSAGE_LEN} byte limit"
+        )));
     }
 
     let mut payload = vec![0u8; len as usize];

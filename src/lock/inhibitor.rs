@@ -71,11 +71,15 @@ impl InhibitorRegistry {
     }
 
     pub fn blocks(&self, what: InhibitWhat) -> bool {
-        self.inhibitors.values().any(|i| i.what == what && i.mode == InhibitMode::Block)
+        self.inhibitors
+            .values()
+            .any(|i| i.what == what && i.mode == InhibitMode::Block)
     }
 
     pub fn delays(&self, what: InhibitWhat) -> impl Iterator<Item = &Inhibitor> {
-        self.inhibitors.values().filter(move |i| i.what == what && i.mode == InhibitMode::Delay)
+        self.inhibitors
+            .values()
+            .filter(move |i| i.what == what && i.mode == InhibitMode::Delay)
     }
 
     pub fn list(&self) -> impl Iterator<Item = &Inhibitor> {
@@ -91,7 +95,12 @@ mod tests {
     fn block_is_visible_to_blocks_query() {
         let mut reg = InhibitorRegistry::new();
         assert!(!reg.blocks(InhibitWhat::Suspend));
-        let id = reg.add(InhibitWhat::Suspend, "backup-daemon", "running backup", InhibitMode::Block);
+        let id = reg.add(
+            InhibitWhat::Suspend,
+            "backup-daemon",
+            "running backup",
+            InhibitMode::Block,
+        );
         assert!(reg.blocks(InhibitWhat::Suspend));
         reg.remove(id).unwrap();
         assert!(!reg.blocks(InhibitWhat::Suspend));

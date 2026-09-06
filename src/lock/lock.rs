@@ -54,7 +54,9 @@ impl LockManager {
     /// presentation app asked to keep the screen up).
     pub fn lock(&mut self, session: SessionId, policy: &LockPolicy) -> Result<()> {
         if !policy.enabled {
-            return Err(SessionError::Unsupported("locking is disabled in config".into()));
+            return Err(SessionError::Unsupported(
+                "locking is disabled in config".into(),
+            ));
         }
         if self.inhibitors.blocks(InhibitWhat::Lock) {
             return Err(SessionError::PermissionDenied(
@@ -95,7 +97,8 @@ impl LockManager {
             AuthOutcome::Success => entry.state = LockState::Unlocked,
             AuthOutcome::LockedOut { .. } => {
                 entry.state = LockState::LockedOut;
-                self.timeouts.start_lockout(request.session_id, now, auth_policy.lockout);
+                self.timeouts
+                    .start_lockout(request.session_id, now, auth_policy.lockout);
             }
             AuthOutcome::Failure { .. } | AuthOutcome::Error(_) => {}
         }
@@ -163,7 +166,11 @@ mod tests {
     fn repeated_failures_lock_out_further_attempts() {
         let mut mgr = LockManager::new();
         mgr.lock(1, &lock_policy()).unwrap();
-        let req = AuthRequest { session_id: 1, user_name: "alice".into(), password: "wrong".into() };
+        let req = AuthRequest {
+            session_id: 1,
+            user_name: "alice".into(),
+            password: "wrong".into(),
+        };
         let now = Instant::now();
 
         let auth_policy = auth_policy();
@@ -180,7 +187,12 @@ mod tests {
     #[test]
     fn inhibitor_blocks_locking() {
         let mut mgr = LockManager::new();
-        mgr.add_inhibitor(InhibitWhat::Lock, "kiosk-app", "kiosk mode", InhibitMode::Block);
+        mgr.add_inhibitor(
+            InhibitWhat::Lock,
+            "kiosk-app",
+            "kiosk mode",
+            InhibitMode::Block,
+        );
         assert!(mgr.lock(1, &lock_policy()).is_err());
     }
 }

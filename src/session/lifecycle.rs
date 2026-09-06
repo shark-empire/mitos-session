@@ -59,6 +59,9 @@ pub fn end(ctx: &mut SessionContext) -> Result<()> {
     // Best-effort: a session that's already mid-teardown should still
     // end up `Closed` even if something upstream got the state machine
     // into a slightly unexpected place.
-    ctx.state = ctx.state.transition(SessionState::Closed).unwrap_or(SessionState::Closed);
+    ctx.state = ctx
+        .state
+        .transition(SessionState::Closed)
+        .unwrap_or(SessionState::Closed);
     Ok(())
 }

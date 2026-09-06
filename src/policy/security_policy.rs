@@ -33,7 +33,9 @@ pub fn authorize(peer: &PeerCred, request: &Request, sessions: &SessionManager) 
         // greeter/login prompt normally runs as root); starting one
         // for yourself is always fine.
         Request::CreateSession { user_name, .. } => {
-            let self_uid = crate::user::User::by_name(user_name).map(|u| u.uid.as_raw()).ok();
+            let self_uid = crate::user::User::by_name(user_name)
+                .map(|u| u.uid.as_raw())
+                .ok();
             if self_uid == Some(peer.uid) {
                 Ok(())
             } else {

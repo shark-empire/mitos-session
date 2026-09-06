@@ -46,7 +46,9 @@ impl SessionState {
         if self.can_transition_to(next) {
             Ok(next)
         } else {
-            Err(SessionError::InvalidTransition(format!("{self:?} -> {next:?}")))
+            Err(SessionError::InvalidTransition(format!(
+                "{self:?} -> {next:?}"
+            )))
         }
     }
 
@@ -61,19 +63,31 @@ mod tests {
 
     #[test]
     fn valid_transitions_succeed() {
-        assert!(SessionState::Starting.transition(SessionState::Active).is_ok());
-        assert!(SessionState::Active.transition(SessionState::Locked).is_ok());
-        assert!(SessionState::Locked.transition(SessionState::Active).is_ok());
-        assert!(SessionState::Closing.transition(SessionState::Closed).is_ok());
+        assert!(SessionState::Starting
+            .transition(SessionState::Active)
+            .is_ok());
+        assert!(SessionState::Active
+            .transition(SessionState::Locked)
+            .is_ok());
+        assert!(SessionState::Locked
+            .transition(SessionState::Active)
+            .is_ok());
+        assert!(SessionState::Closing
+            .transition(SessionState::Closed)
+            .is_ok());
     }
 
     #[test]
     fn skipping_closing_is_rejected() {
-        assert!(SessionState::Active.transition(SessionState::Closed).is_err());
+        assert!(SessionState::Active
+            .transition(SessionState::Closed)
+            .is_err());
     }
 
     #[test]
     fn closed_is_terminal() {
-        assert!(SessionState::Closed.transition(SessionState::Active).is_err());
+        assert!(SessionState::Closed
+            .transition(SessionState::Active)
+            .is_err());
     }
 }

@@ -20,15 +20,21 @@ impl SeatManager {
     /// we've heard of it. Called for `default_seat` at startup and for
     /// any seat a compositor registers against.
     pub fn ensure_seat(&mut self, id: &str) -> &mut Seat {
-        self.seats.entry(id.to_string()).or_insert_with(|| Seat::new(id))
+        self.seats
+            .entry(id.to_string())
+            .or_insert_with(|| Seat::new(id))
     }
 
     pub fn seat(&self, id: &str) -> Result<&Seat> {
-        self.seats.get(id).ok_or_else(|| SessionError::UnknownSeat(id.to_string()))
+        self.seats
+            .get(id)
+            .ok_or_else(|| SessionError::UnknownSeat(id.to_string()))
     }
 
     pub fn seat_mut(&mut self, id: &str) -> Result<&mut Seat> {
-        self.seats.get_mut(id).ok_or_else(|| SessionError::UnknownSeat(id.to_string()))
+        self.seats
+            .get_mut(id)
+            .ok_or_else(|| SessionError::UnknownSeat(id.to_string()))
     }
 
     pub fn seats(&self) -> impl Iterator<Item = &Seat> {
@@ -66,7 +72,11 @@ impl SeatManager {
     /// was active back onto the queue. Returns the session that was
     /// active before the switch, if any -- callers use this to tell
     /// the outgoing session's compositor to stop rendering.
-    pub fn switch_active(&mut self, seat_id: &str, session: SessionId) -> Result<Option<SessionId>> {
+    pub fn switch_active(
+        &mut self,
+        seat_id: &str,
+        session: SessionId,
+    ) -> Result<Option<SessionId>> {
         let seat = self.seat_mut(seat_id)?;
         if !seat.has_session(session) {
             return Err(SessionError::UnknownSession(session));

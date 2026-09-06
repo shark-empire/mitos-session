@@ -8,7 +8,8 @@
 //! brain" design note for why.
 
 use mitos_session::{
-    authentication, config, errors, idle, ipc, launcher, lock, logging, policy, power, seat, session, signals, user,
+    authentication, config, errors, idle, ipc, launcher, lock, logging, policy, power, seat,
+    session, signals, user,
 };
 
 use errors::Result;
@@ -48,7 +49,9 @@ fn run() -> Result<()> {
                 daemon.handle_ipc(msg);
             }
         })
-        .map_err(|e| errors::SessionError::Protocol(format!("failed to register IPC channel: {e}")))?;
+        .map_err(|e| {
+            errors::SessionError::Protocol(format!("failed to register IPC channel: {e}"))
+        })?;
 
     // Idle tick: 1Hz is plenty for dim/lock/suspend thresholds measured
     // in tens of seconds to minutes, and cheap enough not to bother
@@ -59,7 +62,9 @@ fn run() -> Result<()> {
             daemon.on_idle_tick();
             calloop::timer::TimeoutAction::ToDuration(Duration::from_secs(1))
         })
-        .map_err(|e| errors::SessionError::Protocol(format!("failed to register idle timer: {e}")))?;
+        .map_err(|e| {
+            errors::SessionError::Protocol(format!("failed to register idle timer: {e}"))
+        })?;
 
     let signal_source = calloop::signals::Signals::new(signals::WATCHED)
         .map_err(|e| errors::SessionError::Io(std::io::Error::from(e)))?;
@@ -69,7 +74,9 @@ fn run() -> Result<()> {
                 daemon.on_signal(event);
             }
         })
-        .map_err(|e| errors::SessionError::Protocol(format!("failed to register signal source: {e}")))?;
+        .map_err(|e| {
+            errors::SessionError::Protocol(format!("failed to register signal source: {e}"))
+        })?;
 
     while !daemon.should_exit {
         event_loop
@@ -115,7 +122,9 @@ impl Daemon {
 
     fn handle_ipc(&mut self, msg: ipc::ManagerMessage) {
         match msg {
-            ipc::ManagerMessage::Connected { conn_id, outbox, .. } => {
+            ipc::ManagerMessage::Connected {
+                conn_id, outbox, ..
+            } => {
                 self.registry.register(conn_id, outbox);
             }
             ipc::ManagerMessage::Disconnected { conn_id } => {
@@ -128,7 +137,10 @@ impl Daemon {
                 for ctx in self.sessions.iter_mut() {
                     if ctx.compositor_conn == Some(conn_id) {
                         ctx.compositor_conn = None;
-                        tracing::warn!(session_id = ctx.id(), "session's compositor connection dropped");
+                        tracing::warn!(
+                            session_id = ctx.id(),
+                            "session's compositor connection dropped"
+                        );
                     }
                 }
             }
@@ -137,10 +149,15 @@ impl Daemon {
     }
 
     fn handle_command(&mut self, cmd: ipc::ManagerCommand) {
-        let ipc::ManagerCommand { conn_id, peer, request } = cmd;
+        let ipc::ManagerCommand {
+            conn_id,
+            peer,
+            request,
+        } = cmd;
 
         if let Err(e) = policy::authorize(&peer, &request, &self.sessions) {
-            self.registry.send_response(conn_id, ipc::Response::Error(e.to_string()));
+            self.registry
+                .send_response(conn_id, ipc::Response::Error(e.to_string()));
             return;
         }
 
@@ -148,24 +165,33 @@ impl Daemon {
         self.registry.send_response(conn_id, response);
     }
 
-    fn dispatch(&mut self, conn_id: ipc::ConnId, peer: ipc::PeerCred, request: ipc::Request) -> ipc::Response {
+    fn dispatch(
+        &mut self,
+        conn_id: ipc::ConnId,
+        peer: ipc::PeerCred,
+        request: ipc::Request,
+    ) -> ipc::Response {
         use ipc::{Event, Request, Response};
 
         match request {
-            Request::CreateSession { user_name, seat_id, session_type } => {
-                self.create_session(&peer, &user_name, seat_id, session_type)
-            }
-            Request::TerminateSession { session_id } => match self.sessions.terminate_session(session_id) {
-                Ok(()) => {
-                    self.seats.detach_session(session_id);
-                    logging::audit_log(
-                        logging::AuditEvent::new(peer.uid, "terminate_session", "ok")
-                            .target(session_id.to_string()),
-                    );
-                    Response::Ok
+            Request::CreateSession {
+                user_name,
+                seat_id,
+                session_type,
+            } => self.create_session(&peer, &user_name, seat_id, session_type),
+            Request::TerminateSession { session_id } => {
+                match self.sessions.terminate_session(session_id) {
+                    Ok(()) => {
+                        self.seats.detach_session(session_id);
+                        logging::audit_log(
+                            logging::AuditEvent::new(peer.uid, "terminate_session", "ok")
+                                .target(session_id.to_string()),
+                        );
+                        Response::Ok
+                    }
+                    Err(e) => Response::Error(e.to_string()),
                 }
-                Err(e) => Response::Error(e.to_string()),
-            },
+            }
             Request::RegisterCompositor { session_id } => match self.sessions.get_mut(session_id) {
                 Ok(ctx) => {
                     ctx.compositor_conn = Some(conn_id);
@@ -177,47 +203,83 @@ impl Daemon {
                 }
                 Err(e) => Response::Error(e.to_string()),
             },
-            Request::ListSessions => Response::Sessions(self.sessions.list().map(session_info).collect()),
+            Request::ListSessions => {
+                Response::Sessions(self.sessions.list().map(session_info).collect())
+            }
             Request::SessionStatus { session_id } => match self.sessions.get(session_id) {
                 Ok(ctx) => Response::Session(session_info(ctx)),
                 Err(e) => Response::Error(e.to_string()),
             },
-            Request::LockSession { session_id } => self.lock_session(&peer, session_id, lock::LockReason::Manual),
-            Request::Unlock { session_id, user_name, password } => self.unlock(&peer, session_id, user_name, password),
+            Request::LockSession { session_id } => {
+                self.lock_session(&peer, session_id, lock::LockReason::Manual)
+            }
+            Request::Unlock {
+                session_id,
+                user_name,
+                password,
+            } => self.unlock(&peer, session_id, user_name, password),
             Request::ReportActivity { seat_id } => {
                 self.idle.record_activity(&seat_id, Instant::now());
                 Response::Ok
             }
-            Request::SwitchSession { seat_id, session_id } => match self.seats.switch_active(&seat_id, session_id) {
+            Request::SwitchSession {
+                seat_id,
+                session_id,
+            } => match self.seats.switch_active(&seat_id, session_id) {
                 Ok(_previous) => {
                     if let Ok(ctx) = self.sessions.get(session_id) {
                         if let Some(c) = ctx.compositor_conn {
-                            self.registry.send_event(c, Event::SessionActivated { seat_id, session_id });
+                            self.registry.send_event(
+                                c,
+                                Event::SessionActivated {
+                                    seat_id,
+                                    session_id,
+                                },
+                            );
                         }
                     }
                     Response::Ok
                 }
                 Err(e) => Response::Error(e.to_string()),
             },
-            Request::Inhibit { what, who, why, mode } => {
+            Request::Inhibit {
+                what,
+                who,
+                why,
+                mode,
+            } => {
                 let id = self.locks.add_inhibitor(what, who, why, mode);
                 Response::InhibitGranted { inhibit_id: id }
             }
-            Request::ReleaseInhibit { inhibit_id } => match self.locks.release_inhibitor(inhibit_id) {
-                Ok(()) => Response::Ok,
-                Err(e) => Response::Error(e.to_string()),
-            },
+            Request::ReleaseInhibit { inhibit_id } => {
+                match self.locks.release_inhibitor(inhibit_id) {
+                    Ok(()) => Response::Ok,
+                    Err(e) => Response::Error(e.to_string()),
+                }
+            }
             Request::ListInhibitors => Response::Inhibitors(
                 self.locks
                     .inhibitors
                     .list()
-                    .map(|i| ipc::InhibitorInfo { id: i.id, what: i.what, who: i.who.clone(), why: i.why.clone(), mode: i.mode })
+                    .map(|i| ipc::InhibitorInfo {
+                        id: i.id,
+                        what: i.what,
+                        who: i.who.clone(),
+                        why: i.why.clone(),
+                        mode: i.mode,
+                    })
                     .collect(),
             ),
             Request::Suspend => {
                 let lock_policy = lock::LockPolicy::from(&self.settings.lock);
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
-                match power::suspend(&self.sessions, &mut self.locks, &lock_policy, &self.registry, grace) {
+                match power::suspend(
+                    &self.sessions,
+                    &mut self.locks,
+                    &lock_policy,
+                    &self.registry,
+                    grace,
+                ) {
                     Ok(()) => Response::Ok,
                     Err(e) => Response::Error(e.to_string()),
                 }
@@ -255,14 +317,20 @@ impl Daemon {
         let session_type = match session_type.as_deref() {
             Some("x11") => session::SessionType::X11,
             Some("tty") => session::SessionType::Tty,
-            Some(_) | None => policy::SessionPolicy::from(&self.settings.session).default_session_type,
+            Some(_) | None => {
+                policy::SessionPolicy::from(&self.settings.session).default_session_type
+            }
         };
 
-        match self.sessions.create_session(user, &seat_id, session_type, &self.settings.session) {
+        match self
+            .sessions
+            .create_session(user, &seat_id, session_type, &self.settings.session)
+        {
             Ok(id) => {
                 self.seats.attach_session(&seat_id, id);
                 logging::audit_log(
-                    logging::AuditEvent::new(peer.uid, "create_session", "ok").target(user_name.to_string()),
+                    logging::AuditEvent::new(peer.uid, "create_session", "ok")
+                        .target(user_name.to_string()),
                 );
 
                 // A tty session is its own "compositor" (a shell);
@@ -276,7 +344,9 @@ impl Daemon {
                         let binary = self.settings.session.compositor_binary.clone();
                         match launcher::spawn_compositor(&ctx.user, &ctx.environment, &binary) {
                             Ok(child) => ctx.compositor_process = Some(child),
-                            Err(e) => tracing::warn!(session_id = id, error = %e, "failed to spawn compositor"),
+                            Err(e) => {
+                                tracing::warn!(session_id = id, error = %e, "failed to spawn compositor")
+                            }
                         }
                     }
                 }
@@ -288,54 +358,89 @@ impl Daemon {
             }
             Err(e) => {
                 logging::audit_log(
-                    logging::AuditEvent::new(peer.uid, "create_session", e.to_string()).target(user_name.to_string()),
+                    logging::AuditEvent::new(peer.uid, "create_session", e.to_string())
+                        .target(user_name.to_string()),
                 );
                 ipc::Response::Error(e.to_string())
             }
         }
     }
 
-    fn lock_session(&mut self, peer: &ipc::PeerCred, session_id: session::SessionId, reason: lock::LockReason) -> ipc::Response {
+    fn lock_session(
+        &mut self,
+        peer: &ipc::PeerCred,
+        session_id: session::SessionId,
+        reason: lock::LockReason,
+    ) -> ipc::Response {
         let lock_policy = lock::LockPolicy::from(&self.settings.lock);
         match self.locks.lock(session_id, &lock_policy) {
             Ok(()) => {
                 if let Ok(ctx) = self.sessions.get_mut(session_id) {
                     let _ = ctx.transition(session::SessionState::Locked);
                     if let Some(c) = ctx.compositor_conn {
-                        self.registry.send_event(c, ipc::Event::ShowLockScreen { session_id, reason });
+                        self.registry
+                            .send_event(c, ipc::Event::ShowLockScreen { session_id, reason });
                     }
                 }
-                logging::audit_log(logging::AuditEvent::new(peer.uid, "lock_session", "ok").target(session_id.to_string()));
+                logging::audit_log(
+                    logging::AuditEvent::new(peer.uid, "lock_session", "ok")
+                        .target(session_id.to_string()),
+                );
                 ipc::Response::Ok
             }
             Err(e) => ipc::Response::Error(e.to_string()),
         }
     }
 
-    fn unlock(&mut self, peer: &ipc::PeerCred, session_id: session::SessionId, user_name: String, password: String) -> ipc::Response {
+    fn unlock(
+        &mut self,
+        peer: &ipc::PeerCred,
+        session_id: session::SessionId,
+        user_name: String,
+        password: String,
+    ) -> ipc::Response {
         let auth_policy = policy::auth_policy(&self.settings.authentication, &self.settings.lock);
-        let request = authentication::AuthRequest { session_id, user_name: user_name.clone(), password };
-        let outcome = self.locks.attempt_unlock(self.authenticator.as_ref(), &request, &auth_policy, Instant::now());
+        let request = authentication::AuthRequest {
+            session_id,
+            user_name: user_name.clone(),
+            password,
+        };
+        let outcome = self.locks.attempt_unlock(
+            self.authenticator.as_ref(),
+            &request,
+            &auth_policy,
+            Instant::now(),
+        );
 
         match &outcome {
             authentication::AuthOutcome::Success => {
                 if let Ok(ctx) = self.sessions.get_mut(session_id) {
                     let _ = ctx.transition(session::SessionState::Active);
                     if let Some(c) = ctx.compositor_conn {
-                        self.registry.send_event(c, ipc::Event::HideLockScreen { session_id });
+                        self.registry
+                            .send_event(c, ipc::Event::HideLockScreen { session_id });
                     }
                 }
             }
             _ => {
                 if let Ok(ctx) = self.sessions.get(session_id) {
                     if let Some(c) = ctx.compositor_conn {
-                        self.registry.send_event(c, ipc::Event::AuthFeedback { session_id, outcome: outcome.clone() });
+                        self.registry.send_event(
+                            c,
+                            ipc::Event::AuthFeedback {
+                                session_id,
+                                outcome: outcome.clone(),
+                            },
+                        );
                     }
                 }
             }
         }
 
-        logging::audit_log(logging::AuditEvent::new(peer.uid, "unlock_attempt", format!("{outcome:?}")).target(user_name));
+        logging::audit_log(
+            logging::AuditEvent::new(peer.uid, "unlock_attempt", format!("{outcome:?}"))
+                .target(user_name),
+        );
         ipc::Response::AuthResult(outcome)
     }
 
@@ -347,7 +452,12 @@ impl Daemon {
         for (seat_id, stage) in self.idle.tick(now, &idle_policy) {
             match stage {
                 idle::IdleStage::Active => {}
-                idle::IdleStage::Dimmed => self.notify_active_compositor(&seat_id, ipc::Event::Dim { seat_id: seat_id.clone() }),
+                idle::IdleStage::Dimmed => self.notify_active_compositor(
+                    &seat_id,
+                    ipc::Event::Dim {
+                        seat_id: seat_id.clone(),
+                    },
+                ),
                 idle::IdleStage::LockRequested => {
                     if !lock_policy.lock_on_idle {
                         continue;
@@ -359,7 +469,10 @@ impl Daemon {
                                 if let Some(c) = ctx.compositor_conn {
                                     self.registry.send_event(
                                         c,
-                                        ipc::Event::ShowLockScreen { session_id, reason: lock::LockReason::Idle },
+                                        ipc::Event::ShowLockScreen {
+                                            session_id,
+                                            reason: lock::LockReason::Idle,
+                                        },
                                     );
                                 }
                             }
@@ -368,7 +481,13 @@ impl Daemon {
                 }
                 idle::IdleStage::SuspendRequested => {
                     let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
-                    if let Err(e) = power::suspend(&self.sessions, &mut self.locks, &lock_policy, &self.registry, grace) {
+                    if let Err(e) = power::suspend(
+                        &self.sessions,
+                        &mut self.locks,
+                        &lock_policy,
+                        &self.registry,
+                        grace,
+                    ) {
                         tracing::warn!(error = %e, "idle-triggered suspend did not proceed");
                     }
                 }
@@ -401,13 +520,17 @@ impl Daemon {
             }
             signals::SignalEvent::ReloadConfig => match config::load(None) {
                 Ok(new_settings) => {
-                    let auth_policy = policy::auth_policy(&new_settings.authentication, &new_settings.lock);
-                    self.authenticator = Box::new(authentication::PamAuthenticator::new(&auth_policy));
+                    let auth_policy =
+                        policy::auth_policy(&new_settings.authentication, &new_settings.lock);
+                    self.authenticator =
+                        Box::new(authentication::PamAuthenticator::new(&auth_policy));
                     logging::configure_audit_log(&new_settings.logging);
                     self.settings = new_settings;
                     tracing::info!("configuration reloaded");
                 }
-                Err(e) => tracing::error!(error = %e, "failed to reload configuration, keeping previous settings"),
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to reload configuration, keeping previous settings")
+                }
             },
             signals::SignalEvent::ReapChildren => reap_children(),
         }

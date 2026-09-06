@@ -11,7 +11,7 @@ mod policy;
 mod state;
 mod timeout;
 
-pub use inhibitor::{InhibitMode, Inhibitor, InhibitWhat, InhibitorRegistry};
+pub use inhibitor::{InhibitMode, InhibitWhat, Inhibitor, InhibitorRegistry};
 pub use lock::{LockManager, LockReason};
 pub use policy::LockPolicy;
 pub use state::LockState;

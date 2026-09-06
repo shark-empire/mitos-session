@@ -8,5 +8,5 @@ mod security_policy;
 mod session_policy;
 
 pub use lock_policy::LockChainPolicy;
-pub use security_policy::{authorize, auth_policy};
+pub use security_policy::{auth_policy, authorize};
 pub use session_policy::SessionPolicy;

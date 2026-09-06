@@ -23,7 +23,11 @@ pub fn suspend(
         ));
     }
 
-    let delayers: Vec<String> = locks.inhibitors.delays(InhibitWhat::Suspend).map(|i| i.who.clone()).collect();
+    let delayers: Vec<String> = locks
+        .inhibitors
+        .delays(InhibitWhat::Suspend)
+        .map(|i| i.who.clone())
+        .collect();
     if !delayers.is_empty() {
         tracing::info!(?delayers, ?grace, "waiting for suspend-delay inhibitors");
         thread::sleep(grace);

@@ -16,8 +16,15 @@ impl Authenticator for Toggle {
 
 #[test]
 fn policy_pulls_attempt_limits_from_lock_settings() {
-    let auth = AuthSettings { pam_service: "svc".into(), allow_empty_password: false };
-    let lock = LockSettings { max_auth_attempts: 5, lockout_secs: 60, ..Default::default() };
+    let auth = AuthSettings {
+        pam_service: "svc".into(),
+        allow_empty_password: false,
+    };
+    let lock = LockSettings {
+        max_auth_attempts: 5,
+        lockout_secs: 60,
+        ..Default::default()
+    };
 
     let policy = AuthPolicy::new(&auth, &lock);
     assert_eq!(policy.pam_service, "svc");
@@ -33,7 +40,11 @@ fn check_counts_failures_and_resets_on_success() {
         max_attempts: 3,
         lockout: Duration::from_secs(10),
     };
-    let req = AuthRequest { session_id: 1, user_name: "bob".into(), password: "x".into() };
+    let req = AuthRequest {
+        session_id: 1,
+        user_name: "bob".into(),
+        password: "x".into(),
+    };
     let mut attempts = 0;
 
     check(&Toggle(false), &req, &policy, &mut attempts);

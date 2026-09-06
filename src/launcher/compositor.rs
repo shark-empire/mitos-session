@@ -9,5 +9,7 @@ use std::process::Child;
 /// tracked by the caller) rather than tearing the whole session down
 /// -- see docs/session-lifecycle.md.
 pub fn spawn_compositor(user: &User, env: &Environment, binary: &str) -> Result<Child> {
-    Application::new(binary).restart_on_exit(true).spawn(user, env)
+    Application::new(binary)
+        .restart_on_exit(true)
+        .spawn(user, env)
 }

@@ -4,13 +4,20 @@ use std::time::{Duration, Instant};
 
 #[test]
 fn policy_converts_seconds_to_durations() {
-    let settings = IdleSettings { dim_after_secs: 30, lock_after_secs: 90, suspend_after_secs: 0 };
+    let settings = IdleSettings {
+        dim_after_secs: 30,
+        lock_after_secs: 90,
+        suspend_after_secs: 0,
+    };
     let policy = IdlePolicy::from(&settings);
 
     assert_eq!(policy.dim_after, Duration::from_secs(30));
     assert_eq!(policy.lock_after, Duration::from_secs(90));
     // A zero threshold means "never" -- SuspendRequested should be unreachable.
-    assert_eq!(policy.stage_for(Duration::from_secs(10_000)), IdleStage::LockRequested);
+    assert_eq!(
+        policy.stage_for(Duration::from_secs(10_000)),
+        IdleStage::LockRequested
+    );
 }
 
 #[test]

@@ -14,7 +14,8 @@ use tracing_subscriber::EnvFilter;
 /// set, always wins over `session.toml`'s `logging.level` -- handy for
 /// a one-off debug run without editing config.
 pub fn init(settings: &LoggingSettings) {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(settings.level.clone()));
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(settings.level.clone()));
     let subscriber = tracing_subscriber::fmt().with_env_filter(filter);
     if settings.json {
         subscriber.json().init();

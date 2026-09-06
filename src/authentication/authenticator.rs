@@ -124,15 +124,21 @@ mod tests {
         let mut attempts = 0;
         assert!(matches!(
             check(&AlwaysFail, &request(), &policy, &mut attempts),
-            AuthOutcome::Failure { attempts_remaining: 2 }
+            AuthOutcome::Failure {
+                attempts_remaining: 2
+            }
         ));
         assert!(matches!(
             check(&AlwaysFail, &request(), &policy, &mut attempts),
-            AuthOutcome::Failure { attempts_remaining: 1 }
+            AuthOutcome::Failure {
+                attempts_remaining: 1
+            }
         ));
         assert!(matches!(
             check(&AlwaysFail, &request(), &policy, &mut attempts),
-            AuthOutcome::LockedOut { retry_after_secs: 30 }
+            AuthOutcome::LockedOut {
+                retry_after_secs: 30
+            }
         ));
     }
 
@@ -145,7 +151,10 @@ mod tests {
             lockout: Duration::from_secs(30),
         };
         let mut attempts = 2;
-        assert_eq!(check(&AlwaysSucceed, &request(), &policy, &mut attempts), AuthOutcome::Success);
+        assert_eq!(
+            check(&AlwaysSucceed, &request(), &policy, &mut attempts),
+            AuthOutcome::Success
+        );
         assert_eq!(attempts, 0);
     }
 }

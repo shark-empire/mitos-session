@@ -34,7 +34,10 @@ impl IpcClient {
             match read_message::<_, Message>(&mut self.stream)? {
                 Message::Response(resp) => return Ok(resp),
                 Message::Event(event) => {
-                    tracing::debug!(?event, "ignoring unsolicited event on a request/response connection");
+                    tracing::debug!(
+                        ?event,
+                        "ignoring unsolicited event on a request/response connection"
+                    );
                 }
             }
         }
