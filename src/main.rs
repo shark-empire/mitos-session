@@ -66,7 +66,6 @@ fn run() -> Result<()> {
             errors::SessionError::Protocol(format!("failed to register idle timer: {e}"))
         })?;
 
-
     let signal_source = calloop::signals::Signals::new(signals::WATCHED)
         .map_err(|e| errors::SessionError::Io(std::io::Error::from(e)))?;
     handle
@@ -79,8 +78,6 @@ fn run() -> Result<()> {
         .map_err(|e| {
             errors::SessionError::Protocol(format!("failed to register signal source: {e}"))
         })?;
-
-
 
     while !daemon.should_exit {
         event_loop
