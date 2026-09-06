@@ -11,7 +11,7 @@ Every message, in both directions, is:
 
 ```
 +----------------+----------------------------+
-| length (u32 LE)| bincode-encoded payload |
+| length (u32 LE)|  bincode-encoded payload    |
 +----------------+----------------------------+
 ```
 
@@ -60,21 +60,21 @@ client only ever needs one `read_message::<_, Message>()` loop.
 ## Connection lifecycle
 
 1. Client connects; the daemon reads `SO_PEERCRED` immediately and
-registers the connection's outbox with `ConnRegistry` *before*
-reading anything else, so a request that produces an instant reply
-can't race ahead of the connection being known.
+   registers the connection's outbox with `ConnRegistry` *before*
+   reading anything else, so a request that produces an instant reply
+   can't race ahead of the connection being known.
 2. Client sends any number of `Request`s, in any order -- there's no
-required handshake beyond an optional `RegisterCompositor`.
+   required handshake beyond an optional `RegisterCompositor`.
 3. On disconnect, `ConnRegistry` drops the connection's outbox. If it
-was a session's registered compositor, that session's
-`compositor_conn` is cleared (see `Daemon::handle_ipc` in
-`src/main.rs`); a full implementation would trigger a
-relaunch-with-backoff here (tracked in the README roadmap).
+   was a session's registered compositor, that session's
+   `compositor_conn` is cleared (see `Daemon::handle_ipc` in
+   `src/main.rs`); a full implementation would trigger a
+   relaunch-with-backoff here (tracked in the README roadmap).
 
 ## Client implementations
 
 - `ipc::IpcClient` -- blocking one-shot request/reply, used by
-`mitos-sessionctl`.
+  `mitos-sessionctl`.
 - mitos-gui keeps a long-lived connection open and reads `Message`s in
-a loop instead, since it needs to receive `Event`s at any time, not
-just as a reply to something it asked.
+  a loop instead, since it needs to receive `Event`s at any time, not
+  just as a reply to something it asked.
