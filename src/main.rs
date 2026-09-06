@@ -66,11 +66,7 @@ fn run() -> Result<()> {
             errors::SessionError::Protocol(format!("failed to register idle timer: {e}"))
         })?;
 
-    let signal_source = calloop::signals::Signals::new(signals::WATCHED)
-        .map_err(|e| errors::SessionError::Io(std::io::Error::from(e)))?;
-    handle
-        .insert_source(signal_source, |signal, _, daemon: &mut Daemon| {
-            if let Some(event) = signals::classify(signal) {
+           if let Some(event) = signals::classify(signal) {
                 daemon.on_signal(event);
             }
         })
