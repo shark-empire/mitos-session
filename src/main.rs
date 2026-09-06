@@ -66,13 +66,21 @@ fn run() -> Result<()> {
             errors::SessionError::Protocol(format!("failed to register idle timer: {e}"))
         })?;
 
-           if let Some(event) = signals::classify(signal) {
+
+    let signal_source = calloop::signals::Signals::new(signals::WATCHED)
+        .map_err(|e| errors::SessionError::Io(std::io::Error::from(e)))?;
+    handle
+        .insert_source(signal_source, |sig_event, _, daemon: &mut Daemon| {
+            // Extract the Signal enum from the calloop Event struct
+            if let Some(event) = signals::classify(sig_event.signal()) {
                 daemon.on_signal(event);
             }
         })
         .map_err(|e| {
             errors::SessionError::Protocol(format!("failed to register signal source: {e}"))
         })?;
+
+
 
     while !daemon.should_exit {
         event_loop
