@@ -24,7 +24,8 @@ path = "bin/mitos-sessionctl.rs"
 # Sharing it means one lightweight, non-async-runtime execution model
 # across MITOS's userspace daemons instead of pulling tokio into a
 # second process tree just for this one.
-calloop = "0.13"
+calloop = { version = "0.13.0", features = ["signals"] }
+
 
 # Thin safe wrappers over the POSIX bits we need: signals, passwd/group
 # lookups, uid/gid handling, socket peer credentials, reboot(2).
