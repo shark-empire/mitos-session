@@ -24,7 +24,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libclang-dev
+        run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libclang-dev libudev-dev
       - run: cargo check --all-targets --all-features
 
   build:
@@ -36,7 +36,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libclang-dev # <--- FIXED
+        run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libclang-dev libudev-dev # <--- FIXED
       - run: cargo build --all-targets --verbose
       # Also validate the size-optimized [profile.release] in Cargo.toml
       # (LTO + panic=abort can surface issues a debug build won't).
@@ -51,5 +51,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libclang-dev # <--- FIXED
+        run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libclang-dev libudev-dev # <--- FIXED
       - run: cargo test --all-targets --verbose
