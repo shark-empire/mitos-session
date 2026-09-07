@@ -8,6 +8,7 @@ runtime_dir = "/run/mitos-session"
 max_sessions_per_user = 4
 default_session_type = "wayland"
 compositor_binary = "/usr/bin/mitos-gui"
+max_compositor_restarts = 3
 
 [seat]
 default_seat = "seat0"
