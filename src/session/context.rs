@@ -21,6 +21,11 @@ pub struct SessionContext {
     /// Handle to the spawned compositor process, kept so logout can
     /// reap it instead of leaving a zombie.
     pub compositor_process: Option<Child>,
+    /// How many times this session's compositor has already been
+    /// restarted after an unexpected exit. Compared against
+    /// `[session].max_compositor_restarts` by `launcher::decide_restart`
+    /// -- see `Daemon::handle_compositor_exit` in `src/main.rs`.
+    pub compositor_restarts: u32,
 }
 
 impl SessionContext {
