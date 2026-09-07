@@ -45,8 +45,8 @@ process to do its job -- see [`docs/security.md`](docs/security.md).
 - **Real Linux, not a toy.** MITOS runs on the real Linux kernel, so
   this project leans on real kernel/userspace facilities that already
   exist and are well-tested: PAM for authentication, `/etc/passwd` and
-  `/etc/group` via `nix`, `SO_PEERCRED` for IPC authorization, and
-  `reboot(2)` for power transitions.
+  `/etc/group` via `nix`, `udev` for device enumeration, `SO_PEERCRED`
+  for IPC authorization, and `reboot(2)` for power transitions.
 - **Fail loud, fail narrow.** A panic in one client's request handler
   is caught at the connection boundary and turned into an `Error`
   response -- it should never be able to take down every other logged
@@ -58,11 +58,11 @@ process to do its job -- see [`docs/security.md`](docs/security.md).
 |--------------------|----------------|
 | `session/`          | The `Session` type, its lifecycle state machine, per-session environment (`XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`, ...), and the `SessionManager` registry. |
 | `user/`             | Account lookup (`/etc/passwd`, `/etc/group`), supplementary groups, home directory checks, privilege-drop helpers. |
-| `seat/`             | Seats, the active-session-per-seat concept, and the (currently metadata-only) device/display bookkeeping a real multi-seat setup needs. |
+| `seat/`             | Seats, the active-session-per-seat concept, and `udev`-backed device enumeration (a startup snapshot, not live hotplug tracking -- see Known gaps in `docs/architecture.md`). |
 | `lock/`             | Lock state machine, lock policy, idle-triggered/suspend-triggered lock timing, and "inhibitor" locks that let an app say "don't lock while I'm playing a video." |
 | `idle/`             | Idle detection: per-seat activity tracking and the timers that fire dim / lock / suspend thresholds. |
 | `authentication/`   | PAM-backed credential checking, with its own attempt/lockout policy. |
-| `launcher/`         | Spawns `mitos-gui`, autostart applications, and a fallback terminal for a session. |
+| `launcher/`         | Spawns `mitos-gui`, autostart applications, and a fallback terminal for a session, plus the restart-vs-give-up policy for a compositor that keeps crashing (`decide_restart`). |
 | `ipc/`              | The wire protocol, framing, the socket server, the client used by both `mitos-gui` and `mitos-sessionctl`, and peer-credential based authorization. |
 | `power/`            | Suspend / resume / shutdown / reboot orchestration (pre-suspend inhibitor checks, post-resume re-lock, etc). |
 | `signals/`          | `SIGTERM`/`SIGINT`/`SIGHUP`/`SIGCHLD` handling wired into the calloop loop. |
@@ -94,19 +94,21 @@ Two binaries come out of this crate:
 
 This is a full architectural scaffold, not a hardened implementation --
 every module compiles conceptually against the design in `docs/`, with
-the core state machines and IPC framing written for real. Device
-enumeration in `seat/device.rs` and the PAM conversation callback in
-`authentication/authenticator.rs` are the two places most likely to
-need real hardware/PAM-stack testing before this touches a login
-screen.
+the core state machines, IPC framing, device enumeration, and
+compositor crash-restart written for real. The PAM conversation
+callback in `authentication/authenticator.rs` and the *hotplug* half
+of device tracking (enumeration itself is real; live add/remove isn't)
+are the two places most likely to need real hardware/PAM-stack testing
+before this touches a login screen.
 
 ## Roadmap
 
 1. **Core models** -- `session`, `user`, `seat`, `config`, `errors`. (done in this scaffold)
 2. **IPC** -- protocol, framing, server/client, peer-credential authorization. (done in this scaffold)
 3. **Lock, idle, authentication** -- state machines and PAM wiring. (done in this scaffold)
-4. **Launcher, power, signals** -- process spawning and system power transitions. (done in this scaffold)
-5. **Hardening** -- exercise against a real PAM stack and real multi-seat hardware, fill in `seat/device.rs` with `udev` enumeration, add the fuzz/integration tests in `tests/` that need root.
+4. **Launcher, power, signals** -- process spawning, compositor crash-restart-with-backoff, and system power transitions. (done in this scaffold)
+5. **Real device enumeration** -- `seat/device.rs` enumerates input/DRM hardware via `udev` at startup. (done in this scaffold)
+6. **Hardening** -- exercise against a real PAM stack and real multi-seat hardware; wire a `udev::MonitorSocket` into the calloop loop for live hotplug tracking instead of the current startup-only snapshot; add the fuzz/integration tests in `tests/` that need root.
 
 ## License
 

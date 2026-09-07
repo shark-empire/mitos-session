@@ -24,8 +24,7 @@ path = "bin/mitos-sessionctl.rs"
 # Sharing it means one lightweight, non-async-runtime execution model
 # across MITOS's userspace daemons instead of pulling tokio into a
 # second process tree just for this one.
-calloop = { version = "0.13.0", features = ["signals"] }
-
+calloop = "0.13"
 
 # Thin safe wrappers over the POSIX bits we need: signals, passwd/group
 # lookups, uid/gid handling, socket peer credentials, reboot(2).
@@ -56,6 +55,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 pam = "0.8"
 
 clap = { version = "4", features = ["derive"] }
+# Real device enumeration for seat::device (input + DRM nodes), instead
+# of the metadata-only stub this started as. Static enumeration only --
+# hotplug monitoring would need a udev::MonitorSocket wired into
+# calloop as a raw-fd source, which is a bigger, riskier change than
+# fit in this pass; see docs/architecture.md's "Known gaps".
+udev = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
