@@ -1,3 +1,4 @@
+use super::device::Device;
 use super::seat::Seat;
 use crate::errors::{Result, SessionError};
 use crate::session::SessionId;
@@ -20,25 +21,26 @@ impl SeatManager {
     /// we've heard of it. Called for `default_seat` at startup and for
     /// any seat a compositor registers against.
     pub fn ensure_seat(&mut self, id: &str) -> &mut Seat {
-        self.seats
-            .entry(id.to_string())
-            .or_insert_with(|| Seat::new(id))
+        self.seats.entry(id.to_string()).or_insert_with(|| Seat::new(id))
     }
 
     pub fn seat(&self, id: &str) -> Result<&Seat> {
-        self.seats
-            .get(id)
-            .ok_or_else(|| SessionError::UnknownSeat(id.to_string()))
+        self.seats.get(id).ok_or_else(|| SessionError::UnknownSeat(id.to_string()))
     }
 
     pub fn seat_mut(&mut self, id: &str) -> Result<&mut Seat> {
-        self.seats
-            .get_mut(id)
-            .ok_or_else(|| SessionError::UnknownSeat(id.to_string()))
+        self.seats.get_mut(id).ok_or_else(|| SessionError::UnknownSeat(id.to_string()))
     }
 
     pub fn seats(&self) -> impl Iterator<Item = &Seat> {
         self.seats.values()
+    }
+
+    /// Replace `seat_id`'s device list wholesale -- used once at
+    /// startup with the result of `seat::enumerate()`. Creates the
+    /// seat if it doesn't exist yet, same as `ensure_seat`.
+    pub fn set_devices(&mut self, seat_id: &str, devices: Vec<Device>) {
+        self.ensure_seat(seat_id).devices = devices;
     }
 
     /// Attach a newly-created session to a seat. If the seat has no
@@ -72,11 +74,7 @@ impl SeatManager {
     /// was active back onto the queue. Returns the session that was
     /// active before the switch, if any -- callers use this to tell
     /// the outgoing session's compositor to stop rendering.
-    pub fn switch_active(
-        &mut self,
-        seat_id: &str,
-        session: SessionId,
-    ) -> Result<Option<SessionId>> {
+    pub fn switch_active(&mut self, seat_id: &str, session: SessionId) -> Result<Option<SessionId>> {
         let seat = self.seat_mut(seat_id)?;
         if !seat.has_session(session) {
             return Err(SessionError::UnknownSession(session));
@@ -128,5 +126,15 @@ mod tests {
         let previous = mgr.switch_active("seat0", 2).unwrap();
         assert_eq!(previous, Some(1));
         assert_eq!(mgr.active_session("seat0").unwrap(), Some(2));
+    }
+
+    #[test]
+    fn set_devices_creates_the_seat_if_needed() {
+        use super::super::device::{Device, DeviceKind};
+
+        let mut mgr = SeatManager::new();
+        let devices = vec![Device { syspath: "/sys/class/input/event3".into(), kind: DeviceKind::Keyboard }];
+        mgr.set_devices("seat0", devices.clone());
+        assert_eq!(mgr.seat("seat0").unwrap().devices, devices);
     }
 }
