@@ -9,6 +9,6 @@ mod desktop;
 mod terminal;
 
 pub use application::Application;
-pub use compositor::spawn_compositor;
+pub use compositor::{decide_restart, spawn_compositor, RestartDecision};
 pub use desktop::spawn_autostart;
 pub use terminal::spawn_fallback_terminal;
