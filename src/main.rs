@@ -78,17 +78,19 @@ fn run() -> Result<()> {
             errors::SessionError::Protocol(format!("failed to register idle timer: {e}"))
         })?;
 
-    let signal_source = calloop::signals::Signals::new(signals::WATCHED)
-        .map_err(|e| errors::SessionError::Io(std::io::Error::from(e)))?;
-    handle
-        .insert_source(signal_source, |signal, _, daemon: &mut Daemon| {
-            if let Some(event) = signals::classify(signal) {
-                daemon.on_signal(event);
-            }
-        })
-        .map_err(|e| {
-            errors::SessionError::Protocol(format!("failed to register signal source: {e}"))
-        })?;
+let signal_source = calloop::signals::Signals::new(signals::WATCHED)
+    .map_err(|e| errors::SessionError::Io(std::io::Error::from(e)))?;
+
+handle
+    .insert_source(signal_source, |event, _, daemon: &mut Daemon| {
+        if let Some(session_event) = signals::classify(event.signal) {
+            daemon.on_signal(session_event);
+        }
+    })
+    .map_err(|e| {
+        errors::SessionError::Protocol(format!("failed to register signal source: {e}"))
+    })?;
+
 
     while !daemon.should_exit {
         event_loop
