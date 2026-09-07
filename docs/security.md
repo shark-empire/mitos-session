@@ -68,9 +68,11 @@ enforces (e.g. `pam_faillock`) -- it does not replace it.
   code, not admin-configurable per-action. A machine that wants "only
   the physically-present user may suspend it" needs that added as a
   real policy layer, not a config toggle, today.
-- **`seat::device` is metadata only.** Real device arbitration between
-  multiple simultaneous seats isn't implemented (see README's
-  roadmap) -- this scaffold assumes single-seat until that lands.
+- **`seat::device` enumerates real hardware, but only once at startup.**
+  There's no live hotplug tracking yet (see `docs/architecture.md`'s
+  Known gaps) and no real device arbitration between multiple
+  simultaneous seats -- this scaffold assumes single-seat until that
+  lands.
 - **`user::groups` reads `/etc/group` directly**, not through NSS, so
   directory-backed accounts (LDAP/SSSD) may get an incomplete
   supplementary group list when their session's processes are

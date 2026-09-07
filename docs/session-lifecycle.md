@@ -19,23 +19,52 @@ transition table enforced in code):
                           Closed
 ```
 
-- **Starting** -- `Request::CreateSession` has been accepted, the
-  user's home directory is confirmed usable, `XDG_RUNTIME_DIR` exists,
-  and (for non-`tty` sessions) `mitos-gui` has been spawned but hasn't
-  registered itself yet.
-- **Active** -- `Request::RegisterCompositor` arrived: the session has
-  a live display and owns its seat's active slot.
+- **Starting** -- `Request::CreateSession` has just been accepted
+  (user's home directory confirmed usable, `XDG_RUNTIME_DIR` exists,
+  and for non-`tty` sessions `mitos-gui` has been spawned but hasn't
+  registered itself yet).
+- **Active** -- `Request::RegisterCompositor` arrived and the session
+  wasn't locked: it has a live display and owns its seat's active
+  slot.
 - **Idle** -- `idle::IdleDetector` crossed the `dim_after_secs`
   threshold for this session's seat. Purely informational; nothing
   about authentication changes here.
-- **Locked** -- either `Request::LockSession` or the idle timer
-  crossing `lock_after_secs` (if `lock_on_idle` is set). Only a
-  successful `Request::Unlock` moves back to `Active`.
+- **Locked** -- `Request::LockSession`, or the idle timer crossing
+  `lock_after_secs` (if `lock_on_idle` is set). Only a successful
+  `Request::Unlock` moves back to `Active`.
 - **Closing** -- `Request::TerminateSession`, or the daemon shutting
   down (`SIGTERM`/`SIGINT`) and terminating every session itself.
   The compositor process is killed and reaped here.
 - **Closed** -- terminal; the session is removed from
   `SessionManager`'s registry immediately after.
+
+## When a compositor crashes
+
+The diagram above is the happy path. `Active`, `Idle`, and `Locked`
+can all also fall back to `Starting` -- not shown, to keep the diagram
+readable -- when `SIGCHLD` reports that a session's compositor process
+exited on its own rather than through `TerminateSession`
+(`Daemon::handle_compositor_exit` in `src/main.rs`):
+
+1. The dead process is cleared out and its (now-stale) IPC connection
+   is unregistered.
+2. The session drops to `Starting` -- it isn't gone, it just has no
+   display for a moment.
+3. `launcher::decide_restart` checks `compositor_restarts` against
+   `[session].max_compositor_restarts`: under the limit, mitos-gui is
+   relaunched (`Restart`); at the limit, a plain shell is launched
+   instead (`FallbackToTerminal`) so there's still something to work
+   from and debug.
+4. Once a (relaunched or fallback) process registers itself via
+   `RegisterCompositor`, the session becomes `Active` again -- *unless*
+   `LockManager` still considers it locked, in which case it goes
+   straight to `Locked` and the fresh compositor is told to show the
+   lock screen again. A crash never unlocks a session.
+
+The restart counter is per-session and doesn't currently decay over
+time (see `docs/architecture.md`'s Known gaps) -- a compositor that
+crashes once, runs fine for hours, and then crashes again picks up the
+count where it left off.
 
 ## Idle -> lock -> suspend chain
 
