@@ -52,7 +52,9 @@ impl SessionState {
         if self.can_transition_to(next) {
             Ok(next)
         } else {
-            Err(SessionError::InvalidTransition(format!("{self:?} -> {next:?}")))
+            Err(SessionError::InvalidTransition(format!(
+                "{self:?} -> {next:?}"
+            )))
         }
     }
 
@@ -67,20 +69,32 @@ mod tests {
 
     #[test]
     fn valid_transitions_succeed() {
-        assert!(SessionState::Starting.transition(SessionState::Active).is_ok());
-        assert!(SessionState::Active.transition(SessionState::Locked).is_ok());
-        assert!(SessionState::Locked.transition(SessionState::Active).is_ok());
-        assert!(SessionState::Closing.transition(SessionState::Closed).is_ok());
+        assert!(SessionState::Starting
+            .transition(SessionState::Active)
+            .is_ok());
+        assert!(SessionState::Active
+            .transition(SessionState::Locked)
+            .is_ok());
+        assert!(SessionState::Locked
+            .transition(SessionState::Active)
+            .is_ok());
+        assert!(SessionState::Closing
+            .transition(SessionState::Closed)
+            .is_ok());
     }
 
     #[test]
     fn skipping_closing_is_rejected() {
-        assert!(SessionState::Active.transition(SessionState::Closed).is_err());
+        assert!(SessionState::Active
+            .transition(SessionState::Closed)
+            .is_err());
     }
 
     #[test]
     fn closed_is_terminal() {
-        assert!(SessionState::Closed.transition(SessionState::Active).is_err());
+        assert!(SessionState::Closed
+            .transition(SessionState::Active)
+            .is_err());
     }
 
     #[test]
@@ -88,13 +102,21 @@ mod tests {
         // This is the transition a compositor crash-and-restart takes
         // (see `launcher::decide_restart` / `Daemon::handle_compositor_exit`)
         // -- the session isn't gone, it just has no display for a moment.
-        assert!(SessionState::Active.transition(SessionState::Starting).is_ok());
-        assert!(SessionState::Idle.transition(SessionState::Starting).is_ok());
-        assert!(SessionState::Locked.transition(SessionState::Starting).is_ok());
+        assert!(SessionState::Active
+            .transition(SessionState::Starting)
+            .is_ok());
+        assert!(SessionState::Idle
+            .transition(SessionState::Starting)
+            .is_ok());
+        assert!(SessionState::Locked
+            .transition(SessionState::Starting)
+            .is_ok());
         // But you still can't skip straight back to Active --
         // RegisterCompositor deciding that depends on whether the
         // session is still actually locked (see the next test).
-        assert!(SessionState::Starting.transition(SessionState::Idle).is_err());
+        assert!(SessionState::Starting
+            .transition(SessionState::Idle)
+            .is_err());
     }
 
     #[test]
@@ -104,6 +126,8 @@ mod tests {
         // registers afterward needs to be told to show the lock screen
         // again rather than the session silently coming back Active --
         // see `Daemon`'s `RegisterCompositor` handler in src/main.rs.
-        assert!(SessionState::Starting.transition(SessionState::Locked).is_ok());
+        assert!(SessionState::Starting
+            .transition(SessionState::Locked)
+            .is_ok());
     }
 }
