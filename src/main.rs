@@ -83,9 +83,10 @@ fn run() -> Result<()> {
 
     handle
         .insert_source(signal_source, |event, _, daemon: &mut Daemon| {
-            if let Some(session_event) = signals::classify(event.signal) {
-                daemon.on_signal(session_event);
-            }
+            if let Some(session_event) = signals::classify(event.signal()) {
+    daemon.on_signal(session_event);
+}
+
         })
         .map_err(|e| {
             errors::SessionError::Protocol(format!("failed to register signal source: {e}"))
