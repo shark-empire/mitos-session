@@ -17,6 +17,7 @@ impl Default for SessionSettings {
             max_sessions_per_user: 4,
             default_session_type: "wayland".to_string(),
             compositor_binary: "/usr/bin/mitos-gui".to_string(),
+            max_compositor_restarts: 3,
         }
     }
 }

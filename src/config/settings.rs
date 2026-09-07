@@ -27,6 +27,10 @@ pub struct SessionSettings {
     /// Compositor binary spawned for non-tty sessions. Points at
     /// mitos-gui by default.
     pub compositor_binary: String,
+    /// How many times to relaunch a session's compositor after it
+    /// exits unexpectedly before giving up and falling back to a
+    /// plain terminal. See `launcher::decide_restart`.
+    pub max_compositor_restarts: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
