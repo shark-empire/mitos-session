@@ -424,6 +424,17 @@ impl Daemon {
         session_id: session::SessionId,
         reason: lock::LockReason,
     ) -> ipc::Response {
+        // --- PASSWORD CHECK FOR MANUAL LOCK ---
+        if let Ok(ctx) = self.sessions.get(session_id) {
+            if !user_has_password(&ctx.session.user_name) {
+                tracing::info!(
+                    user = %ctx.session.user_name, 
+                    "Manual lock rejected: user has no password configured."
+                );
+                return ipc::Response::Error("Lock screen disabled: No password set for this user.".to_string());
+            }
+        }
+
         let lock_policy = lock::LockPolicy::from(&self.settings.lock);
         match self.locks.lock(session_id, &lock_policy) {
             Ok(()) => {
@@ -515,6 +526,17 @@ impl Daemon {
                         continue;
                     }
                     if let Ok(Some(session_id)) = self.seats.active_session(&seat_id) {
+                        // --- PASSWORD CHECK FOR IDLE LOCK ---
+                        if let Ok(ctx) = self.sessions.get(session_id) {
+                            if !user_has_password(&ctx.session.user_name) {
+                                tracing::debug!(
+                                    user = %ctx.session.user_name, 
+                                    "Skipping idle lock: user has no password configured."
+                                );
+                                continue;
+                            }
+                        }
+
                         if self.locks.lock(session_id, &lock_policy).is_ok() {
                             if let Ok(ctx) = self.sessions.get_mut(session_id) {
                                 let _ = ctx.transition(session::SessionState::Locked);
@@ -714,4 +736,34 @@ fn notify_service_manager_ready() {
 fn notify_service_manager_stopping() {
     let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]);
     tracing::debug!("Notified service manager that mitos-session is STOPPING.");
+}
+
+// --- PASSWORD CHECK HELPER ---
+
+/// Checks if a user has a usable password set in /etc/shadow.
+/// Returns `false` if the password is empty, locked (!), or disabled (*).
+/// Fails "secure" (returns true) if the file cannot be read.
+fn user_has_password(username: &str) -> bool {
+    let shadow_content = match std::fs::read_to_string("/etc/shadow") {
+        Ok(c) => c,
+        Err(_) => {
+            tracing::warn!("Could not read /etc/shadow, assuming user has a password (fail-secure).");
+            return true; 
+        }
+    };
+
+    for line in shadow_content.lines() {
+        let parts: Vec<&str> = line.split(':').collect();
+        if parts.len() >= 2 && parts[0] == username {
+            let hash = parts[1];
+            // Empty password, explicitly locked (!), or disabled (*)
+            if hash.is_empty() || hash == "!" || hash == "*" || hash == "!!" || hash.starts_with('!') {
+                return false; // No usable password
+            }
+            return true;
+        }
+    }
+    
+    // User not found in shadow? Fail secure.
+    true 
 }
