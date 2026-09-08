@@ -26,10 +26,10 @@ fn main() {
 fn run() -> Result<()> {
     // --- PANIC HOOK ---
     // Ensures that if a thread panics, we log the backtrace before the 
-    // process aborts, so                    if let Err mitos-services captures the actual error.
+    // process aborts, so mitos-services captures the actual error.
     std::panic::set_hook(Box::new(|info| {
         let backtrace = std::backtrace::Backtrace::force_capture();
-(e) = power        tracing::error!("FATAL PANIC in mitos-session: {}\n{}", info, backtrace);
+        tracing::error!("FATAL PANIC in mitos-session: {}\n{}", info, backtrace);
     }));
 
     let config_path = std::env::args().nth(1).map(PathBuf::from);
@@ -51,7 +51,7 @@ fn run() -> Result<()> {
         // usable seat; mitos-gui/libinput do their own device access
         // independently of this bookkeeping (see docs/security.md).
         Err(e) => {
-            tracing::warn!(error = %e, "udev device enumeration failed, continuing with an empty device list")
+            tracing::warn!(error = %e, "udev device enumeration failed, continuing with an empty device list");
         }
     }
 
@@ -501,11 +501,7 @@ impl Daemon {
         let idle_policy = idle::IdlePolicy::from(&self.settings.idle);
         let lock_policy = lock::LockPolicy::from(&self.settings.lock);
 
-        for (seat_id, stage) in self.idle.tick(now, &idle_policy) {::suspend(
-                        &self.sessions,
-                        &mut self.locks,
-                        &lock_policy,
-
+        for (seat_id, stage) in self.idle.tick(now, &idle_policy) {
             match stage {
                 idle::IdleStage::Active => {}
                 idle::IdleStage::Dimmed => self.notify_active_compositor(
@@ -542,370 +538,190 @@ impl Daemon {
                         &mut self.locks,
                         &lock_policy,
                         &self.registry,
-                        grace                        &self.registry,
                         grace,
                     ) {
-                        tracing,
-                    ) {
-                        tracing::warn!(error::warn!(error = %e, = %e, "idle-triggered "idle-triggered suspend did not proceed suspend did not proceed");
-                    }
-                }
-");
+                        tracing::warn!(error = %e, "idle-triggered suspend did not proceed");
                     }
                 }
             }
-                   }
         }
 
-        for }
-
-        for session_id in self.locks.timeouts session_id in self.locks.timeouts.expired_lockouts.expired_lockouts(now) {
-(now) {
-            self.locks            self.locks.clear_lockout(session.clear_lockout(session_id);
-        }
-    }_id);
+        for session_id in self.locks.timeouts.expired_lockouts(now) {
+            self.locks.clear_lockout(session_id);
         }
     }
 
-    fn notify
-
-    fn notify_active_compositor(&_active_compositor(&self, seat_idself, seat_id: &str,: &str, event: ipc:: event: ipc::Event) {
-Event) {
-        if let Ok        if let Ok(Some(session_id)) = self.seats.active_session(seat(Some(session_id)) = self.seats.active_session(seat_id) {
-            if let Ok_id) {
-            if let Ok(ctx) = self(ctx) = self.sessions.get(session_id.sessions.get(session_id) {
-               ) {
-                if let Some(c if let Some(c) = ctx.compositor_conn {
-) = ctx.compositor_conn {
-                    self.registry.send_event(c, event                    self.registry.send_event(c, event);
-                });
+    fn notify_active_compositor(&self, seat_id: &str, event: ipc::Event) {
+        if let Ok(Some(session_id)) = self.seats.active_session(seat_id) {
+            if let Ok(ctx) = self.sessions.get(session_id) {
+                if let Some(c) = ctx.compositor_conn {
+                    self.registry.send_event(c, event);
                 }
             }
-
-            }
         }
-           }
     }
 
-    fn }
-
-    fn on_signal(&mut self, event: on_signal(&mut self, event: signals::SignalEvent) {
-        signals::SignalEvent) {
+    fn on_signal(&mut self, event: signals::SignalEvent) {
         match event {
- match event {
-            signals::Signal            signals::SignalEvent::Terminate =>Event::Terminate => {
-                tracing {
-                tracing::info!("received::info!("received termination signal, shutting termination signal, shutting down");
+            signals::SignalEvent::Terminate => {
+                tracing::info!("received termination signal, shutting down");
                 
- down");
-                
-                // --- STOP                // --- STOPPING NOTIFICATION ---PING NOTIFICATION ---
-                notify_service
-                notify_service_manager_stopping();_manager_stopping();
+                // --- STOPPING NOTIFICATION ---
+                notify_service_manager_stopping();
 
-                if let
-
-                if let Err(e) = signals::graceful_shutdown(&mut self.sessions, & Err(e) = signals::graceful_shutdown(&mut self.sessions, &self.socket_path) {
-                    tracingself.socket_path) {
-                    tracing::error!(error::error!(error = %e, = %e, "error during graceful "error during graceful shutdown");
-                shutdown");
+                if let Err(e) = signals::graceful_shutdown(&mut self.sessions, &self.socket_path) {
+                    tracing::error!(error = %e, "error during graceful shutdown");
                 }
-                self.should_exit = true }
                 self.should_exit = true;
             }
-            signals::;
-            }
-            signals::SignalEvent::ReloadConfig => match configSignalEvent::ReloadConfig => match config::load(None) {
-                Ok::load(None) {
-                Ok(new_settings) =>(new_settings) => {
-                    let {
-                    let auth_policy =
-                        policy::auth auth_policy =
-                        policy::auth_policy(&new_settings.authentication, &new_policy(&new_settings.authentication, &new_settings.lock);
-                    self.authenticator_settings.lock);
-                    self.authenticator =
-                        Box::new(authentication =
-                        Box::new(authentication::PamAuthenticator::new(&::PamAuthenticator::new(&auth_policy));
-auth_policy));
-                    logging::configure                    logging::configure_audit_log(&new_settings.logging);
-_audit_log(&new_settings.logging);
-                    self.settings =                    self.settings = new_settings;
- new_settings;
-                    tracing::info!("configuration reloaded                    tracing::info!("configuration reloaded");
-                }");
+            signals::SignalEvent::ReloadConfig => match config::load(None) {
+                Ok(new_settings) => {
+                    let auth_policy = policy::auth_policy(
+                        &new_settings.authentication,
+                        &new_settings.lock,
+                    );
+                    self.authenticator = Box::new(authentication::PamAuthenticator::new(&auth_policy));
+                    logging::configure_audit_log(&new_settings.logging);
+                    self.settings = new_settings;
+                    tracing::info!("configuration reloaded");
                 }
-                Err(e
                 Err(e) => {
-) => {
-                    tracing::error                    tracing::error!(error = %!(error = %e, "failede, "failed to reload configuration, keeping previous settings") to reload configuration, keeping previous settings")
+                    tracing::error!(error = %e, "failed to reload configuration, keeping previous settings");
                 }
             },
-           
-                }
-            },
-            signals::SignalEvent signals::SignalEvent::ReapChildren::ReapChildren => self.reap_children(),
-        => self.reap_children(),
+            signals::SignalEvent::ReapChildren => self.reap_children(),
         }
-    } }
     }
 
-    /// Re
-
-    /// Reap every exited childap every exited child without blocking, and without blocking, and for each one, for each one,
-    /// check
-    /// check whether it was a whether it was a session's compositor -- session's compositor -- if so, that if so, that's
-    ///'s
-    /// what actually drives crash-restart-with-back what actually drives crash-restart-with-backoff
-    /// (`handle_compositoroff
-    /// (`handle_compositor_exit`). Autostart applications also exit_exit`). Autostart applications also exit
-    /// through here, but nothing
+    /// Reap every exited child without blocking, and for each one,
+    /// check whether it was a session's compositor -- if so, that's
+    /// what actually drives crash-restart-with-backoff
+    /// (`handle_compositor_exit`). Autostart applications also exit
     /// through here, but nothing currently supervises those beyond
-    /// currently supervises those beyond
-    /// reaping them so they don't linger reaping them so they don't linger as zombies.
- as zombies.
-    fn reap_children    fn reap_children(&mut self)(&mut self) {
-        use {
-        use nix::sys nix::sys::wait::{wait::wait::{waitpid, WaitPidFlag, WaitStatus};
-        use nix::unistdpid, WaitPidFlag, WaitStatus};
+    /// reaping them so they don't linger as zombies.
+    fn reap_children(&mut self) {
+        use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
         use nix::unistd::Pid;
 
         loop {
-::Pid;
-
-        loop {
-            let (pid            let (pid, status) =, status) = match waitpid(Pid::from_raw match waitpid(Pid::from_raw(-1), Some(WaitPidFlag(-1), Some(WaitPidFlag::WNOH::WNOHANG)) {
-ANG)) {
-                Ok(Wait                Ok(WaitStatus::StillAliveStatus::StillAlive) => break,) => break,
-                Err(_)
-                Err(_) => break, // ECHILD: no => break, // ECHILD: no children left
-                children left
-                Ok(status) => Ok(status) => match status.pid() match status.pid() {
-                    Some {
-                    Some(pid) => (pid, status),(pid) => (pid, status),
-                    None =>
-                    None => continue, // a continue, // a status with no pid status with no pid isn't one we isn't one we can correlate to a session
-                }, can correlate to a session
+            let (pid, status) = match waitpid(Pid::from_raw(-1), Some(WaitPidFlag::WNOHANG)) {
+                Ok(WaitStatus::StillAlive) => break,
+                Err(_) => break, // ECHILD: no children left
+                Ok(status) => match status.pid() {
+                    Some(pid) => (pid, status),
+                    None => continue, // a status with no pid isn't one we can correlate to a session
                 },
             };
-            tracing::debug
-            };
-            tracing::debug!(?status, "reaped child!(?status, "reaped child process");
-            process");
-            self.handle_compositor self.handle_compositor_exit(pid);
-        }
-   _exit(pid);
+            tracing::debug!(?status, "reaped child process");
+            self.handle_compositor_exit(pid);
         }
     }
 
-    /// }
-
-    /// If `pid` If `pid` was a session's was a session's compositor, clear it compositor, clear it out and either
- out and either
-    /// relaunch    /// relaunch it or fall back it or fall back to a terminal, to a terminal, per
-    /// `launcher::dec per
-    /// `launcher::decide_restart`. If `pid` belongside_restart`. If `pid` belongs to something else
-    /// (an to something else
-    /// (an autostart app autostart app, most likely),, most likely), this is a no-op -- `re this is a no-op -- `reap_children`
-    /// already didap_children`
-    /// already did the only thing that the only thing that needed doing for it needed doing for it.
-    fn.
-    fn handle_compositor_exit handle_compositor_exit(&mut self,(&mut self, pid: nix pid: nix::unistd::Pid) {
-       ::unistd::Pid) {
-        let raw_pid = pid.as_raw() let raw_pid = pid.as_raw() as u32;
-
-        let as u32;
+    /// If `pid` was a session's compositor, clear it out and either
+    /// relaunch it or fall back to a terminal, per
+    /// `launcher::decide_restart`. If `pid` belongs to something else
+    /// (an autostart app, most likely), this is a no-op -- `reap_children`
+    /// already did the only thing that needed doing for it.
+    fn handle_compositor_exit(&mut self, pid: nix::unistd::Pid) {
+        let raw_pid = pid.as_raw() as u32;
 
         let found = self
- found = self
             .sessions
-            .sessions
-            .iter_mut            .iter_mut()
-            .()
+            .iter_mut()
             .find(|ctx| {
-                ctxfind(|ctx| {
-                ctx.compositor_process.as_ref().map(std.compositor_process.as_ref().map(std::process::Child::id) ==::process::Child::id) == Some(raw_pid)
+                ctx.compositor_process
+                    .as_ref()
+                    .map(std::process::Child::id) == Some(raw_pid)
             })
- Some(raw_pid)
-            })
-            .map(|            .map(|ctx| {
-ctx| {
-                ctx.compositor_process = None;                ctx.compositor_process = None;
-                let stale
-                let stale_conn = ctx.com_conn = ctx.compositor_conn.take();positor_conn.take();
+            .map(|ctx| {
+                ctx.compositor_process = None;
+                let stale_conn = ctx.compositor_conn.take();
                 (
-
-                (
-                    ctx.id(),                    ctx.id(),
-                    ctx.session
+                    ctx.id(),
                     ctx.session.user_name.clone(),
-                    ctx.com.user_name.clone(),
                     ctx.compositor_restarts,
-                    stale_connpositor_restarts,
                     stale_conn,
                 )
             });
 
-,
-                )
-            });
-
-        let Some((        let Some((session_id, usersession_id, user_name, restarts, stale_conn))_name, restarts, stale_conn)) = found else { = found else {
-            return;
+        let Some((session_id, user_name, restarts, stale_conn)) = found else {
             return;
         };
 
-
-        };
-
-        if let Some        if let Some(conn) = stale(conn) = stale_conn {
-           _conn {
-            self.registry.unregister(conn self.registry.unregister(conn);
-        });
-        }
-        if let
-        if let Ok(ctx) = Ok(ctx) = self.sessions.get_mut self.sessions.get_mut(session_id) {(session_id) {
-            // Best-effort: if
-            // Best-effort: if the session is already on its way out the session is already on its way out
-            // (`
-            // (`Closing`/`Closing`/`Closed`) this transitionClosed`) this transition is simply invalid
- is simply invalid
-            // and ignored -- there's nothing            // and ignored -- there's nothing to relaunch for a session
-            to relaunch for a session
-            // that's being torn down anyway. // that's being torn down anyway.
-            let _ = ctx.transition(session
-            let _ = ctx.transition(session::SessionState::::SessionState::Starting);
-       Starting);
+        if let Some(conn) = stale_conn {
+            self.registry.unregister(conn);
         }
 
-        match launcher::decide }
+        if let Ok(ctx) = self.sessions.get_mut(session_id) {
+            // Best-effort: if the session is already on its way out
+            // (`Closing`/`Closed`) this transition is simply invalid
+            // and ignored -- there's nothing to relaunch for a session
+            // that's being torn down anyway.
+            let _ = ctx.transition(session::SessionState::Starting);
+        }
 
-        match launcher::decide_restart(restarts,_restart(restarts, self.settings.session.max self.settings.session.max_compositor_restarts_compositor_restarts) {
-           ) {
-            launcher::RestartDecision launcher::RestartDecision::Restart => {::Restart => {
-                tracing::
-                tracing::warn!(session_idwarn!(session_id, %user_name, %user_name, restarts,, restarts, "compositor exited "compositor exited unexpectedly, restarting it unexpectedly, restarting it");
-                if");
-                if let Ok(ctx) let Ok(ctx) = self.sessions.get_mut(session_id) = self.sessions.get_mut(session_id) {
-                    ctx {
-                    ctx.compositor_restarts.compositor_restarts += 1;
+        match launcher::decide_restart(restarts, self.settings.session.max_compositor_restarts) {
+            launcher::RestartDecision::Restart => {
+                tracing::warn!(session_id, %user_name, restarts, "compositor exited unexpectedly, restarting it");
+                if let Ok(ctx) = self.sessions.get_mut(session_id) {
+                    ctx.compositor_restarts += 1;
                 }
- += 1;
-                }
-                self.try_spawn                self.try_spawn_compositor(session_id_compositor(session_id);
+                self.try_spawn_compositor(session_id);
             }
-            launcher::);
-            }
-            launcher::RestartDecision::FallbackToTerminal => {RestartDecision::FallbackToTerminal => {
-                tracing::error!(session_id
-                tracing::error!(session_id, %user_name, restarts,, %user_name, restarts, "compositor kept crashing, falling back "compositor kept crashing, falling back to a terminal"); to a terminal");
-                let fallback
+            launcher::RestartDecision::FallbackToTerminal => {
+                tracing::error!(session_id, %user_name, restarts, "compositor kept crashing, falling back to a terminal");
                 let fallback = self
-                    = self
-                    .sessions
                     .sessions
                     .get(session_id)
-                    . .get(session_id)
-                    .map(|ctx| launcher::spawn_fmap(|ctx| launcher::spawn_fallback_terminal(&ctx.user, &ctxallback_terminal(&ctx.user, &ctx.environment));
-               .environment));
+                    .map(|ctx| launcher::spawn_fallback_terminal(&ctx.user, &ctx.environment));
                 match fallback {
- match fallback {
-                    Ok(Ok                    Ok(Ok(child)) => {(child)) => {
-                        if let Ok(ctx) =
-                        if let Ok(ctx) = self.sessions.get_mut(session_id) { self.sessions.get_mut(session_id) {
-                            ctx.com
-                            ctx.compositor_process = Somepositor_process = Some(child);
-                       (child);
+                    Ok(Ok(child)) => {
+                        if let Ok(ctx) = self.sessions.get_mut(session_id) {
+                            ctx.compositor_process = Some(child);
                         }
-                    } }
                     }
-                    Ok(Err(e)) =>
                     Ok(Err(e)) => {
-                        tracing {
-                        tracing::error!(session::error!(session_id, error =_id, error = %e, " %e, "failed to spawn fallback terminal too")
-failed to spawn fallback terminal too")
+                        tracing::error!(session_id, error = %e, "failed to spawn fallback terminal too");
                     }
-                                       }
-                    Err(e) => Err(e) => {
-                        tracing {
-                        tracing::error!(session::error!(session_id, error = %e, "_id, error = %e, "session vanished before asession vanished before a fallback terminal could be fallback terminal could be spawned")
-                    spawned")
+                    Err(e) => {
+                        tracing::error!(session_id, error = %e, "session vanished before a fallback terminal could be spawned");
                     }
-                } }
                 }
             }
-
-            }
         }
-           }
     }
 }
 
-fn session_info(ctx }
-}
-
-fn session_info(ctx: &session::: &session::SessionContext) ->SessionContext) -> ipc::SessionInfo ipc::SessionInfo {
-    ipc {
+fn session_info(ctx: &session::SessionContext) -> ipc::SessionInfo {
     ipc::SessionInfo {
-        id:::SessionInfo {
-        id: ctx.session.id, ctx.session.id,
-        uid:
+        id: ctx.session.id,
         uid: ctx.session.uid.as_raw(),
-        ctx.session.uid.as_raw(),
-        user_name: ctx.session.user_name.clone user_name: ctx.session.user_name.clone(),
-        seat_id: ctx.session(),
+        user_name: ctx.session.user_name.clone(),
         seat_id: ctx.session.seat_id.clone(),
-        session.seat_id.clone(),
-        session_type: ctx.session_type: ctx.session.session_type,
-.session_type,
-        state: format!("{:?}", ctx        state: format!("{:?}", ctx.state),
-       .state),
-        locked: ctx.state locked: ctx.state.is_locked(),
-.is_locked(),
-        created_at:        created_at: ctx.session.created_at ctx.session.created_at,
-    },
+        session_type: ctx.session.session_type,
+        state: format!("{:?}", ctx.state),
+        locked: ctx.state.is_locked(),
+        created_at: ctx.session.created_at,
     }
 }
 
-//
+// --- SERVICE MANAGER NOTIFICATIONS ---
+
+fn notify_service_manager_ready() {
+    // TODO: Wire this to your mitos-services readiness protocol.
+    
+    // Option A: If mitos-services uses systemd-compatible sd_notify:
+    // let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
+    
+    // Option B: If mitos-services uses a custom FIFO/Pipe:
+    // let _ = std::fs::write("/run/mitos-services/mitos-session.ready", "1");
+    
+    tracing::debug!("Notified service manager that mitos-session is READY.");
 }
 
-// --- SERVICE MANAGER --- SERVICE MANAGER NOTIFICATIONS ---
-
- NOTIFICATIONS ---
-
-fn notifyfn notify_service_manager_ready() {
-    //_service_manager_ready() {
-    // TODO: Wire this to your mitos-services TODO: Wire this to your mitos-services readiness protocol.
+fn notify_service_manager_stopping() {
+    // Option A: If mitos-services uses systemd-compatible sd_notify:
+    // let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]);
     
-    // Option readiness protocol.
-    
-    // Option A: If mitos A: If mitos-services uses systemd-compatible-services uses systemd-compatible sd_notify:
-    // let _ sd_notify:
-    // let _ = sd_notify:: = sd_notify::notify(false, &[notify(false, &[sd_notify::NotifyState::Ready]);sd_notify::NotifyState::Ready]);
-    
-    //
-    
-    // Option B: If Option B: If mitos-services uses a mitos-services uses a custom FIFO/Pipe custom FIFO/Pipe:
-    //:
-    // let _ = std let _ = std::fs::write::fs::write("/run/mitos("/run/mitos-services/mitos-session.ready", "1-services/mitos-session.ready", "1");
-    
-   ");
-    
-    tracing::debug!(" tracing::debug!("Notified service managerNotified service manager that mitos-session is that mitos-session is READY.");
-} READY.");
-}
-
-fn notify_service
-
-fn notify_service_manager_stopping()_manager_stopping() {
-    // {
-    // Option A: If mitos-services uses systemd Option A: If mitos-services uses systemd-compatible sd_notify:
-    // let-compatible sd_notify:
-    // let _ = sd_notify::notify(false, _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping &[sd_notify::NotifyState::Stopping]);
-    
-   ]);
-    
-    tracing::debug!(" tracing::debug!("Notified service manager that mitos-session isNotified service manager that mitos-session is STOPPING.");
-}
-``` STOPPING.");
+    tracing::debug!("Notified service manager that mitos-session is STOPPING.");
 }
