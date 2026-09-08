@@ -25,7 +25,7 @@ fn main() {
 
 fn run() -> Result<()> {
     // --- PANIC HOOK ---
-    // Ensures that if a thread panics, we log the backtrace before the 
+    // Ensures that if a thread panics, we log the backtrace before the
     // process aborts, so mitos-services captures the actual error.
     std::panic::set_hook(Box::new(|info| {
         let backtrace = std::backtrace::Backtrace::force_capture();
@@ -565,7 +565,7 @@ impl Daemon {
         match event {
             signals::SignalEvent::Terminate => {
                 tracing::info!("received termination signal, shutting down");
-                
+
                 // --- STOPPING NOTIFICATION ---
                 notify_service_manager_stopping();
 
@@ -576,11 +576,10 @@ impl Daemon {
             }
             signals::SignalEvent::ReloadConfig => match config::load(None) {
                 Ok(new_settings) => {
-                    let auth_policy = policy::auth_policy(
-                        &new_settings.authentication,
-                        &new_settings.lock,
-                    );
-                    self.authenticator = Box::new(authentication::PamAuthenticator::new(&auth_policy));
+                    let auth_policy =
+                        policy::auth_policy(&new_settings.authentication, &new_settings.lock);
+                    self.authenticator =
+                        Box::new(authentication::PamAuthenticator::new(&auth_policy));
                     logging::configure_audit_log(&new_settings.logging);
                     self.settings = new_settings;
                     tracing::info!("configuration reloaded");
@@ -629,9 +628,7 @@ impl Daemon {
             .sessions
             .iter_mut()
             .find(|ctx| {
-                ctx.compositor_process
-                    .as_ref()
-                    .map(std::process::Child::id) == Some(raw_pid)
+                ctx.compositor_process.as_ref().map(std::process::Child::id) == Some(raw_pid)
             })
             .map(|ctx| {
                 ctx.compositor_process = None;
@@ -709,19 +706,19 @@ fn session_info(ctx: &session::SessionContext) -> ipc::SessionInfo {
 
 fn notify_service_manager_ready() {
     // TODO: Wire this to your mitos-services readiness protocol.
-    
+
     // Option A: If mitos-services uses systemd-compatible sd_notify:
     // let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
-    
+
     // Option B: If mitos-services uses a custom FIFO/Pipe:
     // let _ = std::fs::write("/run/mitos-services/mitos-session.ready", "1");
-    
+
     tracing::debug!("Notified service manager that mitos-session is READY.");
 }
 
 fn notify_service_manager_stopping() {
     // Option A: If mitos-services uses systemd-compatible sd_notify:
     // let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]);
-    
+
     tracing::debug!("Notified service manager that mitos-session is STOPPING.");
 }
