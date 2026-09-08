@@ -715,4 +715,3 @@ fn notify_service_manager_stopping() {
     let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]);
     tracing::debug!("Notified service manager that mitos-session is STOPPING.");
 }
-
