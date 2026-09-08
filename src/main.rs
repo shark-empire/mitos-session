@@ -705,20 +705,14 @@ fn session_info(ctx: &session::SessionContext) -> ipc::SessionInfo {
 // --- SERVICE MANAGER NOTIFICATIONS ---
 
 fn notify_service_manager_ready() {
-    // TODO: Wire this to your mitos-services readiness protocol.
-
-    // Option A: If mitos-services uses systemd-compatible sd_notify:
-    // let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
-
-    // Option B: If mitos-services uses a custom FIFO/Pipe:
-    // let _ = std::fs::write("/run/mitos-services/mitos-session.ready", "1");
-
+    // mitos-services sets $NOTIFY_SOCKET automatically and speaks standard sd_notify.
+    // We pass `false` so it doesn't unset the environment variable after sending.
+    let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
     tracing::debug!("Notified service manager that mitos-session is READY.");
 }
 
 fn notify_service_manager_stopping() {
-    // Option A: If mitos-services uses systemd-compatible sd_notify:
-    // let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]);
-
+    let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]);
     tracing::debug!("Notified service manager that mitos-session is STOPPING.");
 }
+
