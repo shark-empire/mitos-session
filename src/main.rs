@@ -428,10 +428,12 @@ impl Daemon {
         if let Ok(ctx) = self.sessions.get(session_id) {
             if !user_has_password(&ctx.session.user_name) {
                 tracing::info!(
-                    user = %ctx.session.user_name, 
+                    user = %ctx.session.user_name,
                     "Manual lock rejected: user has no password configured."
                 );
-                return ipc::Response::Error("Lock screen disabled: No password set for this user.".to_string());
+                return ipc::Response::Error(
+                    "Lock screen disabled: No password set for this user.".to_string(),
+                );
             }
         }
 
@@ -530,7 +532,7 @@ impl Daemon {
                         if let Ok(ctx) = self.sessions.get(session_id) {
                             if !user_has_password(&ctx.session.user_name) {
                                 tracing::debug!(
-                                    user = %ctx.session.user_name, 
+                                    user = %ctx.session.user_name,
                                     "Skipping idle lock: user has no password configured."
                                 );
                                 continue;
@@ -747,8 +749,10 @@ fn user_has_password(username: &str) -> bool {
     let shadow_content = match std::fs::read_to_string("/etc/shadow") {
         Ok(c) => c,
         Err(_) => {
-            tracing::warn!("Could not read /etc/shadow, assuming user has a password (fail-secure).");
-            return true; 
+            tracing::warn!(
+                "Could not read /etc/shadow, assuming user has a password (fail-secure)."
+            );
+            return true;
         }
     };
 
@@ -757,13 +761,18 @@ fn user_has_password(username: &str) -> bool {
         if parts.len() >= 2 && parts[0] == username {
             let hash = parts[1];
             // Empty password, explicitly locked (!), or disabled (*)
-            if hash.is_empty() || hash == "!" || hash == "*" || hash == "!!" || hash.starts_with('!') {
+            if hash.is_empty()
+                || hash == "!"
+                || hash == "*"
+                || hash == "!!"
+                || hash.starts_with('!')
+            {
                 return false; // No usable password
             }
             return true;
         }
     }
-    
+
     // User not found in shadow? Fail secure.
-    true 
+    true
 }
