@@ -23,6 +23,8 @@ path = "bin/mitos-sessionctl.rs"
 
 # Error handling
 anyhow = "1.0"
+
+sd_notify = "0.4"
 # Same event-loop crate mitos-gui's Smithay compositor is built on.
 # Sharing it means one lightweight, non-async-runtime execution model
 # across MITOS's userspace daemons instead of pulling tokio into a
