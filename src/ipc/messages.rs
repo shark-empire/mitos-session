@@ -1,4 +1,5 @@
 use crate::authentication::AuthOutcome;
+use crate::elevation::{ElevationAction, ElevationRequestId, ElevationResponse};
 use crate::lock::{InhibitMode, InhibitWhat, LockReason};
 use crate::session::{SessionId, SessionType};
 use serde::{Deserialize, Serialize};
@@ -65,9 +66,38 @@ pub enum Request {
     Suspend,
     Reboot,
     PowerOff,
+    /// Ask mitos-session to verify `session_id`'s logged-in user
+    /// before a privileged action proceeds -- see the `elevation`
+    /// module. Sent by mitos-service (the permission-policy daemon)
+    /// or root; `policy::authorize` rejects anyone else.
+    ///
+    /// The reply is deferred: unlike every other `Request`, the
+    /// `Response` to this one doesn't arrive until the prompt is
+    /// resolved by a matching `RespondElevation`, by the session
+    /// ending, or by timing out (`[elevation].prompt_timeout_secs`) --
+    /// so a caller using the simple one-shot `IpcClient` should expect
+    /// this call to block for as long as it takes a human to respond,
+    /// not treat a slow reply as a hung connection.
+    RequestElevation {
+        session_id: SessionId,
+        action: ElevationAction,
+    },
+    /// What the user did with an open elevation prompt. Sent by the
+    /// session's registered compositor, or root -- `policy::authorize`
+    /// checks the connection this arrives on against exactly which
+    /// compositor `request_id`'s prompt was shown to, and rejects
+    /// anyone else the same way it would reject a stranger guessing
+    /// `request_id`s at random.
+    RespondElevation {
+        request_id: ElevationRequestId,
+        response: ElevationResponse,
+    },
 }
 
-/// Direct reply to exactly one `Request`.
+/// Direct reply to exactly one `Request` -- usually sent the moment
+/// that request is handled, but not always: `RequestElevation`'s
+/// reply is deferred (see its doc comment), and `AuthResult` is what
+/// eventually arrives for it, exactly as it would for `Unlock`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Response {
     Ok,
@@ -107,6 +137,28 @@ pub enum Event {
     SessionActivated {
         seat_id: String,
         session_id: SessionId,
+    },
+    /// Draw an elevation prompt. Only ever sent to `session_id`'s
+    /// registered compositor at the moment the request was opened --
+    /// `action` is display metadata only, see `elevation::ElevationAction`.
+    ShowElevationPrompt {
+        request_id: ElevationRequestId,
+        session_id: SessionId,
+        action: ElevationAction,
+    },
+    /// One attempt against an open elevation prompt was checked --
+    /// mirrors `AuthFeedback`. On a plain `Failure` the prompt stays
+    /// open for another try; every other outcome is followed by
+    /// `HideElevationPrompt` for the same `request_id`.
+    ElevationFeedback {
+        request_id: ElevationRequestId,
+        outcome: AuthOutcome,
+    },
+    /// `request_id`'s prompt is over -- dismiss it. Sent whether it
+    /// resolved successfully, was cancelled, timed out, or its session
+    /// ended before anyone answered.
+    HideElevationPrompt {
+        request_id: ElevationRequestId,
     },
 }
 
