@@ -100,7 +100,12 @@ impl LockManager {
                 self.timeouts
                     .start_lockout(request.session_id, now, auth_policy.lockout);
             }
-            AuthOutcome::Failure { .. } | AuthOutcome::Error(_) => {}
+            // `check` never actually produces `Cancelled` -- lock/unlock
+            // has no cancel concept, only a password that's right or
+            // isn't -- but it's part of the shared `AuthOutcome` type
+            // (elevation prompts do produce it), so it has to be
+            // handled here too rather than left to a wildcard.
+            AuthOutcome::Failure { .. } | AuthOutcome::Error(_) | AuthOutcome::Cancelled => {}
         }
         outcome
     }
