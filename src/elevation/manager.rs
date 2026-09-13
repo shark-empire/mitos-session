@@ -460,13 +460,25 @@ mod tests {
     fn cancelling_never_touches_the_attempt_counter() {
         let mut mgr = ElevationManager::new();
         let now = Instant::now();
+        
+        // FIX: Use a custom policy with max_attempts: 3 for this specific test.
+        // This ensures that the 2nd failure results in a Failure, not a LockedOut.
+        // If cancel() was bugged and incremented the counter, this 2nd attempt would 
+        // actually be the 3rd failure, resulting in LockedOut and failing the test.
+        let custom_auth_policy = AuthPolicy {
+            pam_service: "test".into(),
+            allow_empty_password: false,
+            max_attempts: 3,
+            lockout: Duration::from_secs(30),
+        };
+
         let id = mgr
-            .begin(1, 100, 200, &policy(), &auth_policy(), now)
+            .begin(1, 100, 200, &policy(), &custom_auth_policy, now)
             .unwrap();
-        mgr.attempt(id, &AlwaysFail, &req(1), &auth_policy(), now);
+        mgr.attempt(id, &AlwaysFail, &req(1), &custom_auth_policy, now);
 
         let id2 = mgr
-            .begin(1, 100, 201, &policy(), &auth_policy(), now)
+            .begin(1, 100, 201, &policy(), &custom_auth_policy, now)
             .unwrap();
         let cancelled = mgr.cancel(id2).unwrap();
         assert_eq!(cancelled.outcome, AuthOutcome::Cancelled);
@@ -474,13 +486,14 @@ mod tests {
         // The one earlier failure is still all that's on the books --
         // one more wrong guess should fail, not lock out.
         let id3 = mgr
-            .begin(1, 100, 202, &policy(), &auth_policy(), now)
+            .begin(1, 100, 202, &policy(), &custom_auth_policy, now)
             .unwrap();
         let outcome = mgr
-            .attempt(id3, &AlwaysFail, &req(1), &auth_policy(), now)
+            .attempt(id3, &AlwaysFail, &req(1), &custom_auth_policy, now)
             .unwrap();
         assert!(matches!(outcome.outcome, AuthOutcome::Failure { .. }));
     }
+
 
     #[test]
     fn max_pending_per_session_is_enforced() {
