@@ -184,7 +184,10 @@ impl Daemon {
                 // waiting on their answer. Either way, nobody's left
                 // to resolve them normally.
                 for abandoned in self.elevation.abandon_connection(conn_id) {
-                    self.notify_elevation_abandoned("a required connection disconnected", abandoned);
+                    self.notify_elevation_abandoned(
+                        "a required connection disconnected",
+                        abandoned,
+                    );
                 }
             }
             ipc::ManagerMessage::Command(cmd) => self.handle_command(cmd),
@@ -280,9 +283,9 @@ impl Daemon {
                     Err(e) => Response::Error(e.to_string()),
                 })
             }
-            Request::ListSessions => {
-                Some(Response::Sessions(self.sessions.list().map(session_info).collect()))
-            }
+            Request::ListSessions => Some(Response::Sessions(
+                self.sessions.list().map(session_info).collect(),
+            )),
             Request::SessionStatus { session_id } => Some(match self.sessions.get(session_id) {
                 Ok(ctx) => Response::Session(session_info(ctx)),
                 Err(e) => Response::Error(e.to_string()),
@@ -350,30 +353,36 @@ impl Daemon {
             Request::Suspend => {
                 let lock_policy = lock::LockPolicy::from(&self.settings.lock);
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
-                Some(match power::suspend(
-                    &self.sessions,
-                    &mut self.locks,
-                    &lock_policy,
-                    &self.registry,
-                    grace,
-                ) {
-                    Ok(()) => Response::Ok,
-                    Err(e) => Response::Error(e.to_string()),
-                })
+                Some(
+                    match power::suspend(
+                        &self.sessions,
+                        &mut self.locks,
+                        &lock_policy,
+                        &self.registry,
+                        grace,
+                    ) {
+                        Ok(()) => Response::Ok,
+                        Err(e) => Response::Error(e.to_string()),
+                    },
+                )
             }
             Request::Reboot => {
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
-                Some(match power::reboot(&mut self.sessions, &self.locks, grace) {
-                    Ok(()) => Response::Ok,
-                    Err(e) => Response::Error(e.to_string()),
-                })
+                Some(
+                    match power::reboot(&mut self.sessions, &self.locks, grace) {
+                        Ok(()) => Response::Ok,
+                        Err(e) => Response::Error(e.to_string()),
+                    },
+                )
             }
             Request::PowerOff => {
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
-                Some(match power::poweroff(&mut self.sessions, &self.locks, grace) {
-                    Ok(()) => Response::Ok,
-                    Err(e) => Response::Error(e.to_string()),
-                })
+                Some(
+                    match power::poweroff(&mut self.sessions, &self.locks, grace) {
+                        Ok(()) => Response::Ok,
+                        Err(e) => Response::Error(e.to_string()),
+                    },
+                )
             }
             // Deferred: `None` means a prompt was opened and pushed to
             // the compositor, and this call's reply will come later
@@ -575,7 +584,9 @@ impl Daemon {
 
         let elevation_policy = elevation::ElevationPolicy::from(&self.settings.elevation);
         if !elevation_policy.enabled {
-            return Some(ipc::Response::Error("elevation is disabled in config".into()));
+            return Some(ipc::Response::Error(
+                "elevation is disabled in config".into(),
+            ));
         }
 
         let ctx = match self.sessions.get(session_id) {
@@ -589,9 +600,11 @@ impl Daemon {
                 user = %ctx.session.user_name,
                 "Elevation request rejected: user has no password configured."
             );
-            return Some(ipc::Response::AuthResult(authentication::AuthOutcome::Error(
-                "no password is configured for this account".into(),
-            )));
+            return Some(ipc::Response::AuthResult(
+                authentication::AuthOutcome::Error(
+                    "no password is configured for this account".into(),
+                ),
+            ));
         }
 
         let Some(compositor_conn) = ctx.compositor_conn else {
@@ -615,9 +628,11 @@ impl Daemon {
                     logging::AuditEvent::new(peer.uid, "elevation_request", "locked_out")
                         .target(session_id.to_string()),
                 );
-                return Some(ipc::Response::AuthResult(authentication::AuthOutcome::LockedOut {
-                    retry_after_secs: secs,
-                }));
+                return Some(ipc::Response::AuthResult(
+                    authentication::AuthOutcome::LockedOut {
+                        retry_after_secs: secs,
+                    },
+                ));
             }
             Err(e) => {
                 tracing::warn!(session_id, error = %e, "elevation request rejected");
@@ -696,8 +711,10 @@ impl Daemon {
             },
         );
         if resolved.terminal {
-            self.registry
-                .send_event(resolved.compositor_conn, ipc::Event::HideElevationPrompt { request_id });
+            self.registry.send_event(
+                resolved.compositor_conn,
+                ipc::Event::HideElevationPrompt { request_id },
+            );
             self.registry.send_response(
                 resolved.requester_conn,
                 ipc::Response::AuthResult(resolved.outcome.clone()),
@@ -705,8 +722,15 @@ impl Daemon {
         }
 
         logging::audit_log(
-            logging::AuditEvent::new(peer.uid, "elevation_response", format!("{:?}", resolved.outcome))
-                .target(format!("session={} request={request_id}", resolved.session_id)),
+            logging::AuditEvent::new(
+                peer.uid,
+                "elevation_response",
+                format!("{:?}", resolved.outcome),
+            )
+            .target(format!(
+                "session={} request={request_id}",
+                resolved.session_id
+            )),
         );
 
         ipc::Response::AuthResult(resolved.outcome)
