@@ -26,6 +26,15 @@ pub enum SessionError {
     #[error("no such inhibitor: {0}")]
     UnknownInhibitor(u64),
 
+    /// Also returned -- deliberately -- when the request id exists but
+    /// the caller isn't the connection allowed to answer it
+    /// (`policy::authorize`'s check for `Request::RespondElevation`).
+    /// Collapsing those two cases into one message means a peer can't
+    /// tell "wrong answer channel" apart from "no such prompt" and use
+    /// that to probe for live request ids.
+    #[error("no such elevation request: {0}")]
+    UnknownElevationRequest(u64),
+
     #[error("authentication failed: {0}")]
     AuthFailed(String),
 
