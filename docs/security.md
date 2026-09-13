@@ -37,6 +37,66 @@ Centralized in `policy::security_policy::authorize`, called once per
   polkit-less behavior. It is *not* the same as "safe for a
   multi-user, mutually-distrusting machine" -- see Known limitations.
 
+## Elevation
+
+The `elevation` module handles a different kind of request: mitos-service
+(the permission-policy daemon that owns MITOS's rulebook of what apps
+may do -- not to be confused with mitos-services, plural, the process
+supervisor mentioned above) asks mitos-session to verify the logged-in
+user before a privileged, app-triggered action proceeds. This is
+orthogonal to the screen-lock flow above -- a session can be fully
+unlocked and still get an elevation prompt -- and it's a three-party
+relay rather than the two-party conversations everything else in this
+document describes: mitos-service asks, mitos-gui prompts and answers,
+mitos-session checks and replies to both.
+
+Two things make this trust boundary meaningfully stricter than the
+"session owner" rule above, and both are deliberate:
+
+- **Only the configured `[elevation].service_user` (or root) may open
+  a prompt at all** -- never a session's own owner acting on their own
+  behalf, and never "any locally-authenticated user" the way the
+  system-wide operations above are. If an ordinary app could trigger a
+  prompt directly, it could show a real, trustworthy-looking system
+  password box captioned with whatever text it liked ("Chrome wants
+  root access") regardless of what it was actually about to do -- a
+  textbook phishing setup. Routing every prompt through mitos-service
+  means the *reason* shown on screen was chosen by the component that
+  actually classified the risk, not by the thing asking for
+  credentials to be checked. If the configured account doesn't resolve
+  to a uid on this system, elevation requests are accepted from
+  nobody but root until it's fixed (`Daemon::resolve_elevation_requester`
+  in `src/main.rs`) -- failing open here would turn a typo'd config
+  value into a door any process could walk through.
+- **Only the exact compositor connection a specific prompt was shown
+  to (or root) may answer it** -- not merely "some process running as
+  the session owner". Only the compositor can draw an unfakeable
+  password prompt in the first place (see `docs/architecture.md`); if
+  any same-uid process could also submit an *answer* to a prompt it
+  didn't draw, a malicious background app could run its own look-alike
+  dialog, relay whatever the user types into it straight through as
+  the "real" answer, and launder a phished password through the one
+  channel that's supposed to be unspoofable. An unknown request id and
+  a wrong-connection attempt are rejected with the identical error on
+  purpose (`errors::SessionError::UnknownElevationRequest`) --
+  distinguishing them would let a caller probe for which request ids
+  currently exist.
+
+A pending request that never gets an answer doesn't linger: it's
+abandoned (and mitos-service's still-blocked call replied to with an
+error) if its `[elevation].prompt_timeout_secs` elapses, if its session
+is terminated, or if the compositor or the original caller disconnects
+-- see `ElevationManager::{expire_pending,abandon_session,abandon_connection}`
+and `Daemon::notify_elevation_abandoned`. Without this, a crashed
+compositor or a session that logged out mid-prompt would leave
+mitos-service's connection blocked indefinitely.
+
+Every request, response, lockout, and abandonment is written to the
+audit log (`logging::audit_log`), including the app name and action
+label mitos-service supplied -- readable later from
+`mitos-settings` per the design doc's promise that every grant
+decision is traceable to who asked for what and when.
+
 ## Privilege dropping
 
 `user::permissions::drop_privileges` and `launcher::Application::spawn`
@@ -61,6 +121,18 @@ level, before `SO_PEERCRED` even enters into it.
 guessing of a session's password over this socket specifically. This
 is defense in depth on top of whatever `/etc/pam.d/<service>` already
 enforces (e.g. `pam_faillock`) -- it does not replace it.
+
+Elevation attempts are tracked and locked out completely separately,
+under `[elevation].max_attempts`/`lockout_secs`, against their own PAM
+service (`[elevation].pam_service`, distinct from `[lock]`'s). A wrong
+lock-screen guess doesn't burn an elevation attempt and vice versa,
+even though both ultimately check the same account's password -- they
+guard against different-shaped attacks (unlock: one attacker sitting
+at a locked screen trying to guess their way in; elevation: one
+attacker hoping a flood of prompts eventually gets fat-fingered
+"yes") worth being able to tune independently, and conflating their
+counters would mean exhausting one silently ate into the other's
+budget.
 
 ## Known limitations
 
