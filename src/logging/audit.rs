@@ -16,6 +16,10 @@ pub struct AuditEvent {
     pub actor_uid: u32,
     pub action: String,
     pub target: Option<String>,
+    /// Free-form extra context beyond `target`, e.g. an elevation
+    /// request's app name and action label -- optional because most
+    /// existing events don't need it.
+    pub detail: Option<String>,
     pub outcome: String,
 }
 
@@ -29,12 +33,18 @@ impl AuditEvent {
             actor_uid,
             action: action.into(),
             target: None,
+            detail: None,
             outcome: outcome.into(),
         }
     }
 
     pub fn target(mut self, target: impl Into<String>) -> Self {
         self.target = Some(target.into());
+        self
+    }
+
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
         self
     }
 }
