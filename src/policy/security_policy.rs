@@ -1,8 +1,10 @@
 use crate::authentication::AuthPolicy;
-use crate::config::{AuthSettings, LockSettings};
+use crate::config::{AuthSettings, ElevationSettings, LockSettings};
+use crate::elevation::ElevationManager;
 use crate::errors::{Result, SessionError};
-use crate::ipc::{PeerCred, Request};
+use crate::ipc::{ConnId, PeerCred, Request};
 use crate::session::{SessionId, SessionManager};
+use std::time::Duration;
 
 /// Central "is this peer allowed to make this request" check, based on
 /// `SO_PEERCRED` identity (see `ipc::permissions`) -- there is no
@@ -12,7 +14,22 @@ use crate::session::{SessionId, SessionManager};
 /// allowed for any local user by design, matching logind's default
 /// behaviour without a polkit-equivalent in front of it -- see
 /// README's roadmap for adding one.
-pub fn authorize(peer: &PeerCred, request: &Request, sessions: &SessionManager) -> Result<()> {
+///
+/// Two requests need more than a peer's uid and `sessions` to decide,
+/// which is why this also takes `conn_id` and `elevation`:
+/// `RequestElevation` is gated on one *specific configured account*
+/// (mitos-service), not on owning any session, and `RespondElevation`
+/// is gated on being the exact connection mitos-session already
+/// pushed that specific prompt to -- see `docs/security.md`'s
+/// Elevation section for why both are stricter than the
+/// session-ownership check everything else here uses.
+pub fn authorize(
+    peer: &PeerCred,
+    conn_id: ConnId,
+    request: &Request,
+    sessions: &SessionManager,
+    elevation: &ElevationManager,
+) -> Result<()> {
     if peer.uid == 0 {
         return Ok(());
     }
@@ -62,13 +79,57 @@ pub fn authorize(peer: &PeerCred, request: &Request, sessions: &SessionManager) 
         | Request::Suspend
         | Request::Reboot
         | Request::PowerOff => Ok(()),
+
+        // Only the configured elevation-requesting service may open a
+        // prompt -- never a session owner acting on their own behalf,
+        // and never "any locally authenticated user" the way the
+        // block above is. Letting arbitrary callers trigger a system
+        // password prompt with caller-supplied display text is
+        // exactly the phishing vector this restricts against.
+        Request::RequestElevation { .. } => {
+            if elevation.is_authorized_requester(peer.uid) {
+                Ok(())
+            } else {
+                Err(SessionError::PermissionDenied(
+                    "only the configured elevation service may open an elevation prompt".into(),
+                ))
+            }
+        }
+
+        // Only the exact connection mitos-session is expecting an
+        // answer from -- the registered compositor for that specific
+        // pending request's session -- may resolve it. An unknown id
+        // and a wrong-connection attempt produce the identical error
+        // on purpose: telling them apart would let a caller probe for
+        // which request ids currently exist.
+        Request::RespondElevation { request_id, .. } => {
+            match elevation.compositor_conn_for(*request_id) {
+                Some(expected) if expected == conn_id => Ok(()),
+                _ => Err(SessionError::UnknownElevationRequest(*request_id)),
+            }
+        }
     }
 }
 
-/// Build the `AuthPolicy` used by `authentication::check`. Attempt and
-/// lockout limits live under `[lock]` in config (they're user-facing
-/// lock-screen behavior) even though the policy object itself belongs
-/// to `authentication`.
+/// Build the `AuthPolicy` used by `authentication::check` for
+/// lock-screen unlock attempts. Attempt and lockout limits live under
+/// `[lock]` in config (they're user-facing lock-screen behavior) even
+/// though the policy object itself belongs to `authentication`.
 pub fn auth_policy(auth: &AuthSettings, lock: &LockSettings) -> AuthPolicy {
     AuthPolicy::new(auth, lock)
+}
+
+/// Build the `AuthPolicy` elevation credential checks run under.
+/// Deliberately separate from `auth_policy` above -- a wrong
+/// lock-screen guess and a wrong elevation-prompt guess are different
+/// events against different thresholds by default, even though they
+/// check the same account's password (see
+/// `config::ElevationSettings::pam_service`'s doc comment).
+pub fn elevation_auth_policy(elevation: &ElevationSettings) -> AuthPolicy {
+    AuthPolicy {
+        pam_service: elevation.pam_service.clone(),
+        allow_empty_password: elevation.allow_empty_password,
+        max_attempts: elevation.max_attempts,
+        lockout: Duration::from_secs(elevation.lockout_secs),
+    }
 }
