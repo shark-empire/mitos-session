@@ -3,7 +3,9 @@
 //! being folded into `tests/ipc.rs` or `tests/session.rs`.
 
 use mitos_session::config::SessionSettings;
-use mitos_session::elevation::{ElevationAction, ElevationManager, ElevationResponse, ElevationRisk};
+use mitos_session::elevation::{
+    ElevationAction, ElevationManager, ElevationResponse, ElevationRisk,
+};
 use mitos_session::ipc::{PeerCred, Request};
 use mitos_session::policy::authorize;
 use mitos_session::session::{SessionManager, SessionType};
@@ -71,7 +73,14 @@ fn a_session_owner_may_act_on_it_but_a_stranger_may_not() {
     let request = Request::LockSession { session_id: id };
     let elevation = no_elevation();
     assert!(authorize(&peer(real_uid), 1, &request, &mgr, &elevation).is_ok());
-    assert!(authorize(&peer(real_uid.wrapping_add(12_345)), 1, &request, &mgr, &elevation).is_err());
+    assert!(authorize(
+        &peer(real_uid.wrapping_add(12_345)),
+        1,
+        &request,
+        &mgr,
+        &elevation
+    )
+    .is_err());
 }
 
 #[test]
