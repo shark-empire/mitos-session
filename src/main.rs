@@ -8,8 +8,8 @@
 //! brain" design note for why.
 
 use mitos_session::{
-    authentication, config, errors, idle, ipc, launcher, lock, logging, policy, power, seat,
-    session, signals, user,
+    authentication, config, elevation, errors, idle, ipc, launcher, lock, logging, policy, power,
+    seat, session, signals, user,
 };
 
 use errors::Result;
@@ -124,6 +124,7 @@ struct Daemon {
     idle: idle::IdleDetector,
     registry: ipc::ConnRegistry,
     authenticator: Box<dyn authentication::Authenticator>,
+    elevation: elevation::ElevationManager,
     socket_path: PathBuf,
     should_exit: bool,
 }
@@ -133,6 +134,10 @@ impl Daemon {
         let auth_policy = policy::auth_policy(&settings.authentication, &settings.lock);
         let authenticator = Box::new(authentication::PamAuthenticator::new(&auth_policy));
         let socket_path = settings.ipc.socket_path.clone();
+
+        let mut elevation = elevation::ElevationManager::new();
+        elevation.set_requester_uid(resolve_elevation_requester(&settings.elevation));
+
         Self {
             settings,
             sessions: session::SessionManager::new(),
@@ -141,6 +146,7 @@ impl Daemon {
             idle: idle::IdleDetector::new(),
             registry: ipc::ConnRegistry::new(),
             authenticator,
+            elevation,
             socket_path,
             should_exit: false,
         }
@@ -172,6 +178,14 @@ impl Daemon {
                         );
                     }
                 }
+                // The same dropped connection might also be holding
+                // open one or more elevation prompts -- as the
+                // compositor that would show them, or as the caller
+                // waiting on their answer. Either way, nobody's left
+                // to resolve them normally.
+                for abandoned in self.elevation.abandon_connection(conn_id) {
+                    self.notify_elevation_abandoned("a required connection disconnected", abandoned);
+                }
             }
             ipc::ManagerMessage::Command(cmd) => self.handle_command(cmd),
         }
@@ -184,14 +198,21 @@ impl Daemon {
             request,
         } = cmd;
 
-        if let Err(e) = policy::authorize(&peer, &request, &self.sessions) {
+        if let Err(e) = policy::authorize(&peer, conn_id, &request, &self.sessions, &self.elevation)
+        {
             self.registry
                 .send_response(conn_id, ipc::Response::Error(e.to_string()));
             return;
         }
 
-        let response = self.dispatch(conn_id, peer, request);
-        self.registry.send_response(conn_id, response);
+        // Most requests get an immediate reply; `RequestElevation` may
+        // not have one yet (see `dispatch`'s handling of it and its
+        // own doc comment on `ipc::Request`) -- when it returns `None`
+        // here, the reply comes later from `respond_elevation` or the
+        // timeout sweep in `on_idle_tick`, not from this call.
+        if let Some(response) = self.dispatch(conn_id, peer, request) {
+            self.registry.send_response(conn_id, response);
+        }
     }
 
     fn dispatch(
@@ -199,7 +220,7 @@ impl Daemon {
         conn_id: ipc::ConnId,
         peer: ipc::PeerCred,
         request: ipc::Request,
-    ) -> ipc::Response {
+    ) -> Option<ipc::Response> {
         use ipc::{Event, Request, Response};
 
         match request {
@@ -207,71 +228,81 @@ impl Daemon {
                 user_name,
                 seat_id,
                 session_type,
-            } => self.create_session(&peer, &user_name, seat_id, session_type),
+            } => Some(self.create_session(&peer, &user_name, seat_id, session_type)),
             Request::TerminateSession { session_id } => {
-                match self.sessions.terminate_session(session_id) {
+                Some(match self.sessions.terminate_session(session_id) {
                     Ok(()) => {
                         self.seats.detach_session(session_id);
                         logging::audit_log(
                             logging::AuditEvent::new(peer.uid, "terminate_session", "ok")
                                 .target(session_id.to_string()),
                         );
+                        // A session that just ended can't answer (or
+                        // benefit from an answer to) any elevation
+                        // prompt still open for it -- close those out
+                        // rather than leaving mitos-service waiting on
+                        // a user who's no longer logged in.
+                        for abandoned in self.elevation.abandon_session(session_id) {
+                            self.notify_elevation_abandoned("session ended", abandoned);
+                        }
                         Response::Ok
                     }
                     Err(e) => Response::Error(e.to_string()),
-                }
+                })
             }
-            Request::RegisterCompositor { session_id } => match self.sessions.get_mut(session_id) {
-                Ok(ctx) => {
-                    ctx.compositor_conn = Some(conn_id);
-                    // First confirmation that the session's display is
-                    // actually up -- this is what moves it out of
-                    // `Starting`. `LockManager` is the source of truth
-                    // for whether it's locked, independent of whatever
-                    // state a compositor crash briefly left it in: if
-                    // this is a fresh compositor instance coming back
-                    // after one, and the session was locked, it stays
-                    // locked and gets told to show the lock screen
-                    // again rather than silently coming up unlocked.
-                    if self.locks.is_locked(session_id) {
-                        let _ = ctx.transition(session::SessionState::Locked);
-                        self.registry.send_event(
-                            conn_id,
-                            Event::ShowLockScreen {
-                                session_id,
-                                reason: lock::LockReason::Manual,
-                            },
-                        );
-                    } else {
-                        let _ = ctx.transition(session::SessionState::Active);
+            Request::RegisterCompositor { session_id } => {
+                Some(match self.sessions.get_mut(session_id) {
+                    Ok(ctx) => {
+                        ctx.compositor_conn = Some(conn_id);
+                        // First confirmation that the session's display is
+                        // actually up -- this is what moves it out of
+                        // `Starting`. `LockManager` is the source of truth
+                        // for whether it's locked, independent of whatever
+                        // state a compositor crash briefly left it in: if
+                        // this is a fresh compositor instance coming back
+                        // after one, and the session was locked, it stays
+                        // locked and gets told to show the lock screen
+                        // again rather than silently coming up unlocked.
+                        if self.locks.is_locked(session_id) {
+                            let _ = ctx.transition(session::SessionState::Locked);
+                            self.registry.send_event(
+                                conn_id,
+                                Event::ShowLockScreen {
+                                    session_id,
+                                    reason: lock::LockReason::Manual,
+                                },
+                            );
+                        } else {
+                            let _ = ctx.transition(session::SessionState::Active);
+                        }
+                        Response::Ok
                     }
-                    Response::Ok
-                }
-                Err(e) => Response::Error(e.to_string()),
-            },
-            Request::ListSessions => {
-                Response::Sessions(self.sessions.list().map(session_info).collect())
+                    Err(e) => Response::Error(e.to_string()),
+                })
             }
-            Request::SessionStatus { session_id } => match self.sessions.get(session_id) {
+            Request::ListSessions => {
+                Some(Response::Sessions(self.sessions.list().map(session_info).collect()))
+            }
+            Request::SessionStatus { session_id } => Some(match self.sessions.get(session_id) {
                 Ok(ctx) => Response::Session(session_info(ctx)),
                 Err(e) => Response::Error(e.to_string()),
-            },
+            }),
             Request::LockSession { session_id } => {
-                self.lock_session(&peer, session_id, lock::LockReason::Manual)
+                Some(self.lock_session(&peer, session_id, lock::LockReason::Manual))
             }
             Request::Unlock {
                 session_id,
                 user_name,
                 password,
-            } => self.unlock(&peer, session_id, user_name, password),
+            } => Some(self.unlock(&peer, session_id, user_name, password)),
             Request::ReportActivity { seat_id } => {
                 self.idle.record_activity(&seat_id, Instant::now());
-                Response::Ok
+                Some(Response::Ok)
             }
             Request::SwitchSession {
                 seat_id,
                 session_id,
-            } => match self.seats.switch_active(&seat_id, session_id) {
+            } => Some(match self.seats.switch_active(&seat_id, session_id) {
                 Ok(_previous) => {
                     if let Ok(ctx) = self.sessions.get(session_id) {
                         if let Some(c) = ctx.compositor_conn {
@@ -287,7 +318,7 @@ impl Daemon {
                     Response::Ok
                 }
                 Err(e) => Response::Error(e.to_string()),
-            },
+            }),
             Request::Inhibit {
                 what,
                 who,
@@ -295,15 +326,15 @@ impl Daemon {
                 mode,
             } => {
                 let id = self.locks.add_inhibitor(what, who, why, mode);
-                Response::InhibitGranted { inhibit_id: id }
+                Some(Response::InhibitGranted { inhibit_id: id })
             }
             Request::ReleaseInhibit { inhibit_id } => {
-                match self.locks.release_inhibitor(inhibit_id) {
+                Some(match self.locks.release_inhibitor(inhibit_id) {
                     Ok(()) => Response::Ok,
                     Err(e) => Response::Error(e.to_string()),
-                }
+                })
             }
-            Request::ListInhibitors => Response::Inhibitors(
+            Request::ListInhibitors => Some(Response::Inhibitors(
                 self.locks
                     .inhibitors
                     .list()
@@ -315,11 +346,11 @@ impl Daemon {
                         mode: i.mode,
                     })
                     .collect(),
-            ),
+            )),
             Request::Suspend => {
                 let lock_policy = lock::LockPolicy::from(&self.settings.lock);
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
-                match power::suspend(
+                Some(match power::suspend(
                     &self.sessions,
                     &mut self.locks,
                     &lock_policy,
@@ -328,22 +359,33 @@ impl Daemon {
                 ) {
                     Ok(()) => Response::Ok,
                     Err(e) => Response::Error(e.to_string()),
-                }
+                })
             }
             Request::Reboot => {
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
-                match power::reboot(&mut self.sessions, &self.locks, grace) {
+                Some(match power::reboot(&mut self.sessions, &self.locks, grace) {
                     Ok(()) => Response::Ok,
                     Err(e) => Response::Error(e.to_string()),
-                }
+                })
             }
             Request::PowerOff => {
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
-                match power::poweroff(&mut self.sessions, &self.locks, grace) {
+                Some(match power::poweroff(&mut self.sessions, &self.locks, grace) {
                     Ok(()) => Response::Ok,
                     Err(e) => Response::Error(e.to_string()),
-                }
+                })
             }
+            // Deferred: `None` means a prompt was opened and pushed to
+            // the compositor, and this call's reply will come later
+            // (from `respond_elevation` or `on_idle_tick`'s timeout
+            // sweep) instead of from here. See `start_elevation`.
+            Request::RequestElevation { session_id, action } => {
+                self.start_elevation(conn_id, &peer, session_id, action)
+            }
+            Request::RespondElevation {
+                request_id,
+                response,
+            } => Some(self.respond_elevation(&peer, request_id, response)),
         }
     }
 
@@ -509,6 +551,192 @@ impl Daemon {
         ipc::Response::AuthResult(outcome)
     }
 
+    /// Handle `Request::RequestElevation`. Returns `Some(response)` for
+    /// everything decidable immediately -- a malformed action, a bad
+    /// session, elevation disabled in config, a user with no password
+    /// configured, or a session already locked out or already at
+    /// `max_pending_per_session` -- and `handle_command` replies with
+    /// that right away. Returns `None` once a prompt has actually been
+    /// pushed to the compositor: from that point the caller's reply is
+    /// deferred until `respond_elevation` or `on_idle_tick`'s timeout
+    /// sweep resolves this specific pending request and replies to
+    /// `conn_id` directly.
+    fn start_elevation(
+        &mut self,
+        conn_id: ipc::ConnId,
+        peer: &ipc::PeerCred,
+        session_id: session::SessionId,
+        action: elevation::ElevationAction,
+    ) -> Option<ipc::Response> {
+        if let Err(msg) = action.validate() {
+            tracing::warn!(session_id, error = %msg, "rejected a malformed elevation request");
+            return Some(ipc::Response::Error(msg.to_string()));
+        }
+
+        let elevation_policy = elevation::ElevationPolicy::from(&self.settings.elevation);
+        if !elevation_policy.enabled {
+            return Some(ipc::Response::Error("elevation is disabled in config".into()));
+        }
+
+        let ctx = match self.sessions.get(session_id) {
+            Ok(ctx) => ctx,
+            Err(e) => return Some(ipc::Response::Error(e.to_string())),
+        };
+
+        // --- PASSWORD CHECK FOR ELEVATION ---
+        if !user_has_password(&ctx.session.user_name) {
+            tracing::info!(
+                user = %ctx.session.user_name,
+                "Elevation request rejected: user has no password configured."
+            );
+            return Some(ipc::Response::AuthResult(authentication::AuthOutcome::Error(
+                "no password is configured for this account".into(),
+            )));
+        }
+
+        let Some(compositor_conn) = ctx.compositor_conn else {
+            return Some(ipc::Response::Error(
+                "session has no active display to show the prompt on".into(),
+            ));
+        };
+
+        let auth_policy = policy::elevation_auth_policy(&self.settings.elevation);
+        let request_id = match self.elevation.begin(
+            session_id,
+            compositor_conn,
+            conn_id,
+            &elevation_policy,
+            &auth_policy,
+            Instant::now(),
+        ) {
+            Ok(id) => id,
+            Err(errors::SessionError::LockedOut(secs)) => {
+                logging::audit_log(
+                    logging::AuditEvent::new(peer.uid, "elevation_request", "locked_out")
+                        .target(session_id.to_string()),
+                );
+                return Some(ipc::Response::AuthResult(authentication::AuthOutcome::LockedOut {
+                    retry_after_secs: secs,
+                }));
+            }
+            Err(e) => {
+                tracing::warn!(session_id, error = %e, "elevation request rejected");
+                return Some(ipc::Response::Error(e.to_string()));
+            }
+        };
+
+        logging::audit_log(
+            logging::AuditEvent::new(peer.uid, "elevation_request", "prompted")
+                .target(format!("session={session_id} request={request_id}"))
+                .detail(format!("{}: {}", action.requesting_app, action.description)),
+        );
+
+        self.registry.send_event(
+            compositor_conn,
+            ipc::Event::ShowElevationPrompt {
+                request_id,
+                session_id,
+                action,
+            },
+        );
+
+        None
+    }
+
+    /// Handle `Request::RespondElevation`. `policy::authorize` has
+    /// already confirmed `conn_id` is allowed to answer `request_id`
+    /// (the exact registered compositor for its session, or root)
+    /// before this is ever called, so this only has to resolve it.
+    fn respond_elevation(
+        &mut self,
+        peer: &ipc::PeerCred,
+        request_id: elevation::ElevationRequestId,
+        response: elevation::ElevationResponse,
+    ) -> ipc::Response {
+        let Some(info) = self.elevation.peek(request_id) else {
+            return ipc::Response::Error(
+                errors::SessionError::UnknownElevationRequest(request_id).to_string(),
+            );
+        };
+
+        let resolved = match response {
+            elevation::ElevationResponse::Cancelled => self.elevation.cancel(request_id),
+            elevation::ElevationResponse::Password(password) => {
+                let user_name = match self.sessions.get(info.session_id) {
+                    Ok(ctx) => ctx.session.user_name.clone(),
+                    Err(e) => return ipc::Response::Error(e.to_string()),
+                };
+                let auth_policy = policy::elevation_auth_policy(&self.settings.elevation);
+                let auth_request = authentication::AuthRequest {
+                    session_id: info.session_id,
+                    user_name,
+                    password,
+                };
+                self.elevation.attempt(
+                    request_id,
+                    self.authenticator.as_ref(),
+                    &auth_request,
+                    &auth_policy,
+                    Instant::now(),
+                )
+            }
+        };
+
+        let Some(resolved) = resolved else {
+            return ipc::Response::Error(
+                errors::SessionError::UnknownElevationRequest(request_id).to_string(),
+            );
+        };
+
+        self.registry.send_event(
+            resolved.compositor_conn,
+            ipc::Event::ElevationFeedback {
+                request_id,
+                outcome: resolved.outcome.clone(),
+            },
+        );
+        if resolved.terminal {
+            self.registry
+                .send_event(resolved.compositor_conn, ipc::Event::HideElevationPrompt { request_id });
+            self.registry.send_response(
+                resolved.requester_conn,
+                ipc::Response::AuthResult(resolved.outcome.clone()),
+            );
+        }
+
+        logging::audit_log(
+            logging::AuditEvent::new(peer.uid, "elevation_response", format!("{:?}", resolved.outcome))
+                .target(format!("session={} request={request_id}", resolved.session_id)),
+        );
+
+        ipc::Response::AuthResult(resolved.outcome)
+    }
+
+    /// Tell both sides of an elevation prompt that just got torn down
+    /// without ever being answered -- its session ended, a connection
+    /// it depended on dropped, or it simply timed out -- that it's
+    /// over. Safe to call even if one side has *also* already
+    /// disconnected: `ConnRegistry` silently drops sends to a
+    /// connection it no longer knows about.
+    fn notify_elevation_abandoned(&self, reason: &str, abandoned: elevation::AbandonedElevation) {
+        self.registry.send_event(
+            abandoned.compositor_conn,
+            ipc::Event::HideElevationPrompt {
+                request_id: abandoned.request_id,
+            },
+        );
+        self.registry.send_response(
+            abandoned.requester_conn,
+            ipc::Response::AuthResult(authentication::AuthOutcome::Error(reason.to_string())),
+        );
+        logging::audit_log(
+            logging::AuditEvent::new(0, "elevation_abandoned", reason).target(format!(
+                "session={} request={}",
+                abandoned.session_id, abandoned.request_id
+            )),
+        );
+    }
+
     fn on_idle_tick(&mut self) {
         let now = Instant::now();
         let idle_policy = idle::IdlePolicy::from(&self.settings.idle);
@@ -573,6 +801,18 @@ impl Daemon {
         for session_id in self.locks.timeouts.expired_lockouts(now) {
             self.locks.clear_lockout(session_id);
         }
+
+        // --- ELEVATION LOCKOUT EXPIRY ---
+        self.elevation.clear_expired_lockouts(now);
+
+        // --- ELEVATION PROMPT TIMEOUT ---
+        // An open prompt nobody ever answered -- the compositor may
+        // have crashed without tripping `Disconnected` yet, or the
+        // user may simply have walked away. Either way, mitos-service
+        // shouldn't be left blocked forever waiting on a reply.
+        for abandoned in self.elevation.expire_pending(now) {
+            self.notify_elevation_abandoned("timed out waiting for a response", abandoned);
+        }
     }
 
     fn notify_active_compositor(&self, seat_id: &str, event: ipc::Event) {
@@ -604,6 +844,8 @@ impl Daemon {
                         policy::auth_policy(&new_settings.authentication, &new_settings.lock);
                     self.authenticator =
                         Box::new(authentication::PamAuthenticator::new(&auth_policy));
+                    self.elevation
+                        .set_requester_uid(resolve_elevation_requester(&new_settings.elevation));
                     logging::configure_audit_log(&new_settings.logging);
                     self.settings = new_settings;
                     tracing::info!("configuration reloaded");
@@ -775,4 +1017,29 @@ fn user_has_password(username: &str) -> bool {
 
     // User not found in shadow? Fail secure.
     true
+}
+
+// --- ELEVATION REQUESTER RESOLUTION ---
+
+/// Resolve `[elevation].service_user` to a uid -- called once at
+/// startup (`Daemon::new`) and again on every config reload
+/// (`Daemon::on_signal`'s `ReloadConfig` arm). `None` if the account
+/// doesn't exist on this system: elevation requests then come from
+/// nobody but root until it's fixed, which is the fail-closed choice
+/// given what this gates (see `docs/security.md`'s Elevation
+/// section) -- silently falling back to "accept from anyone" would
+/// turn a typo'd `service_user` into an open door for triggering
+/// system password prompts.
+fn resolve_elevation_requester(settings: &config::ElevationSettings) -> Option<u32> {
+    match user::User::by_name(&settings.service_user) {
+        Ok(u) => Some(u.uid.as_raw()),
+        Err(e) => {
+            tracing::warn!(
+                account = %settings.service_user,
+                error = %e,
+                "could not resolve [elevation].service_user; only root will be able to open elevation prompts until this is fixed"
+            );
+            None
+        }
+    }
 }

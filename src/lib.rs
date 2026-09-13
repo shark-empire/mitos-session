@@ -6,6 +6,7 @@
 
 pub mod authentication;
 pub mod config;
+pub mod elevation;
 pub mod errors;
 pub mod idle;
 pub mod ipc;
