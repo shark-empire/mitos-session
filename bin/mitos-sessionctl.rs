@@ -5,6 +5,7 @@
 
 use clap::{Parser, Subcommand};
 use mitos_session::config;
+use mitos_session::elevation::{ElevationAction, ElevationResponse, ElevationRisk};
 use mitos_session::errors::Result;
 use mitos_session::ipc::{IpcClient, Request, Response};
 use mitos_session::lock::{InhibitMode, InhibitWhat};
@@ -70,6 +71,47 @@ enum Command {
     Reboot,
     /// Power the machine off.
     Poweroff,
+    /// Open an elevation prompt on a session -- for testing the
+    /// elevation flow end-to-end without mitos-service. This only
+    /// succeeds if the account running this command is
+    /// `[elevation].service_user` or root; see docs/security.md.
+    RequestElevation {
+        session_id: u32,
+        /// Name of the app supposedly requesting this, as shown on
+        /// the prompt.
+        #[arg(long, default_value = "mitos-sessionctl")]
+        app: String,
+        #[arg(long, default_value = "test elevation request")]
+        description: String,
+        #[arg(long, value_enum, default_value = "elevated")]
+        risk: RiskArg,
+        #[arg(long, default_value = "once")]
+        duration: String,
+    },
+    /// Answer an open elevation prompt. Prompts for the password on
+    /// stdin unless `--cancel` is given -- like `unlock`, this is for
+    /// scripting/testing; a real answer comes from mitos-gui talking
+    /// to the daemon directly.
+    RespondElevation {
+        request_id: u64,
+        #[arg(long)]
+        cancel: bool,
+    },
+}
+
+#[derive(Clone, clap::ValueEnum)]
+enum RiskArg {
+    Elevated,
+    Critical,
+}
+
+impl From<RiskArg> for ElevationRisk {
+    fn from(v: RiskArg) -> Self {
+        match v {
+            RiskArg::Elevated => ElevationRisk::Elevated,
+            RiskArg::Critical => ElevationRisk::Critical,
+        }
+    }
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -172,6 +214,32 @@ fn run(cli: Cli) -> Result<()> {
         Command::Suspend => Request::Suspend,
         Command::Reboot => Request::Reboot,
         Command::Poweroff => Request::PowerOff,
+        Command::RequestElevation {
+            session_id,
+            app,
+            description,
+            risk,
+            duration,
+        } => Request::RequestElevation {
+            session_id,
+            action: ElevationAction {
+                requesting_app: app,
+                description,
+                risk: risk.into(),
+                duration_label: duration,
+            },
+        },
+        Command::RespondElevation { request_id, cancel } => {
+            let response = if cancel {
+                ElevationResponse::Cancelled
+            } else {
+                ElevationResponse::Password(read_password()?)
+            };
+            Request::RespondElevation {
+                request_id,
+                response,
+            }
+        }
     };
 
     print_response(client.call(request)?);
