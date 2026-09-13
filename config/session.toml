@@ -30,6 +30,21 @@ suspend_after_secs = 600
 pam_service = "mitos-session"
 allow_empty_password = false
 
+[elevation]
+enabled = true
+# The account mitos-service (the permission-policy daemon that owns
+# the rulebook) runs as. Only this account, or root, may open an
+# elevation prompt -- NOT mitos-services (plural), the process
+# supervisor; see src/config/settings.rs for why that distinction
+# matters here.
+service_user = "mitos-service"
+pam_service = "mitos-elevate"
+allow_empty_password = false
+max_attempts = 3
+lockout_secs = 30
+prompt_timeout_secs = 120
+max_pending_per_session = 3
+
 [power]
 allow_suspend = true
 allow_reboot = true
