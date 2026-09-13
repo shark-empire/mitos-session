@@ -17,16 +17,23 @@ pixel itself -- lock-screen and any other on-screen UI is rendered by
      |
      +-- mitos-session   <-- this project
      |        |
-     |        | unix socket, length-prefixed bincode
+     |        | unix socket, length-prefixed bincode, to both of:
      |        v
      +-- mitos-gui       (Smithay/Wayland compositor + shell, renders
-                           the desktop AND the lock screen on request)
+     |                     the desktop AND the lock screen on request)
+     |
+     +-- mitos-service   (permission-policy daemon: owns the rulebook of
+                           what apps may do, asks this project to verify
+                           the logged-in user before a risky one proceeds)
 ```
 
-`mitos-session` asks `mitos-gui` to *show* a lock screen; `mitos-gui`
-forwards whatever the user types back over the same socket for
-`mitos-session` to check against PAM. Neither side trusts the other's
-process to do its job -- see [`docs/security.md`](docs/security.md).
+`mitos-session` asks `mitos-gui` to *show* a lock screen (or an
+elevation prompt on `mitos-service`'s behalf); `mitos-gui` forwards
+whatever the user types back over the same socket for `mitos-session`
+to check against PAM. `mitos-service` never talks to `mitos-gui`
+directly, and never sees a password -- only mitos-session's verdict.
+Nobody here trusts anyone else's process to do its job -- see
+[`docs/security.md`](docs/security.md).
 
 ## Design principles
 
@@ -62,6 +69,7 @@ process to do its job -- see [`docs/security.md`](docs/security.md).
 | `lock/`             | Lock state machine, lock policy, idle-triggered/suspend-triggered lock timing, and "inhibitor" locks that let an app say "don't lock while I'm playing a video." |
 | `idle/`             | Idle detection: per-seat activity tracking and the timers that fire dim / lock / suspend thresholds. |
 | `authentication/`   | PAM-backed credential checking, with its own attempt/lockout policy. |
+| `elevation/`         | Handles mitos-service's requests to verify the logged-in user before a privileged action proceeds -- a three-party relay (mitos-service asks, mitos-gui prompts, mitos-session checks) distinct from lock/unlock's two-party one. See `docs/security.md`'s Elevation section. |
 | `launcher/`         | Spawns `mitos-gui`, autostart applications, and a fallback terminal for a session, plus the restart-vs-give-up policy for a compositor that keeps crashing (`decide_restart`). |
 | `ipc/`              | The wire protocol, framing, the socket server, the client used by both `mitos-gui` and `mitos-sessionctl`, and peer-credential based authorization. |
 | `power/`            | Suspend / resume / shutdown / reboot orchestration (pre-suspend inhibitor checks, post-resume re-lock, etc). |
@@ -88,7 +96,8 @@ Two binaries come out of this crate:
 - `mitos-session` -- the daemon (needs to run as a privileged service;
   see `docs/security.md`).
 - `mitos-sessionctl` -- a CLI client for talking to it (`list-sessions`,
-  `lock`, `unlock`, `suspend`, `reboot`, `poweroff`, `inhibit`, ...).
+  `lock`, `unlock`, `suspend`, `reboot`, `poweroff`, `inhibit`,
+  `request-elevation`, `respond-elevation`, ...).
 
 ## Status
 
@@ -108,7 +117,8 @@ before this touches a login screen.
 3. **Lock, idle, authentication** -- state machines and PAM wiring. (done in this scaffold)
 4. **Launcher, power, signals** -- process spawning, compositor crash-restart-with-backoff, and system power transitions. (done in this scaffold)
 5. **Real device enumeration** -- `seat/device.rs` enumerates input/DRM hardware via `udev` at startup. (done in this scaffold)
-6. **Hardening** -- exercise against a real PAM stack and real multi-seat hardware; wire a `udev::MonitorSocket` into the calloop loop for live hotplug tracking instead of the current startup-only snapshot; add the fuzz/integration tests in `tests/` that need root.
+6. **Elevation** -- mitos-session's side of the permission-elevation flow: verifying the logged-in user on mitos-service's behalf before a privileged action proceeds, with its own trust boundary, attempt/lockout policy, and prompt-timeout handling (`elevation/`, `docs/security.md`'s Elevation section). (done in this scaffold) mitos-service itself -- the daemon that owns the rulebook and decides an action needs a password in the first place -- is a separate project this repo has no visibility into.
+7. **Hardening** -- exercise against a real PAM stack and real multi-seat hardware; wire a `udev::MonitorSocket` into the calloop loop for live hotplug tracking instead of the current startup-only snapshot; add the fuzz/integration tests in `tests/` that need root.
 
 ## License
 
