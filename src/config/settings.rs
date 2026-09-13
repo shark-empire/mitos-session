@@ -13,6 +13,7 @@ pub struct Settings {
     pub lock: LockSettings,
     pub idle: IdleSettings,
     pub authentication: AuthSettings,
+    pub elevation: ElevationSettings,
     pub power: PowerSettings,
     pub ipc: IpcSettings,
     pub logging: LoggingSettings,
@@ -63,6 +64,36 @@ pub struct IdleSettings {
 pub struct AuthSettings {
     pub pam_service: String,
     pub allow_empty_password: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ElevationSettings {
+    pub enabled: bool,
+    /// The account mitos-service -- the permission-policy daemon that
+    /// owns the rulebook -- runs as. Resolved to a uid at startup and
+    /// on config reload (`Daemon::resolve_elevation_requester` in
+    /// `src/main.rs`); only that uid, or root, may send
+    /// `Request::RequestElevation`. NOT mitos-services (plural), the
+    /// process supervisor this daemon reports readiness to over
+    /// sd_notify -- that's a different component with no business
+    /// asking for elevation prompts, and confusing the two here would
+    /// hand the wrong process the ability to trigger system password
+    /// prompts.
+    pub service_user: String,
+    /// PAM service name for elevation credential checks. Deliberately
+    /// its own setting rather than reusing `[authentication]`'s --
+    /// that section (and its default pam_service) is for lock-screen
+    /// unlock specifically.
+    pub pam_service: String,
+    pub allow_empty_password: bool,
+    pub max_attempts: u32,
+    pub lockout_secs: u64,
+    /// How long an open prompt waits for a response before it's
+    /// abandoned and reported back as timed out.
+    pub prompt_timeout_secs: u64,
+    /// Cap on concurrently outstanding prompts per session.
+    pub max_pending_per_session: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]

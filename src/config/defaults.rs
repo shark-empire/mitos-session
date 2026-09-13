@@ -5,8 +5,8 @@
 //! file is missing entirely.
 
 use super::settings::{
-    AuthSettings, IdleSettings, IpcSettings, LockSettings, LoggingSettings, PowerSettings,
-    SeatSettings, SessionSettings,
+    AuthSettings, ElevationSettings, IdleSettings, IpcSettings, LockSettings, LoggingSettings,
+    PowerSettings, SeatSettings, SessionSettings,
 };
 use std::path::PathBuf;
 
@@ -58,6 +58,21 @@ impl Default for AuthSettings {
         Self {
             pam_service: "mitos-session".to_string(),
             allow_empty_password: false,
+        }
+    }
+}
+
+impl Default for ElevationSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            service_user: "mitos-service".to_string(),
+            pam_service: "mitos-elevate".to_string(),
+            allow_empty_password: false,
+            max_attempts: 3,
+            lockout_secs: 30,
+            prompt_timeout_secs: 120,
+            max_pending_per_session: 3,
         }
     }
 }
