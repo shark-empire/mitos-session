@@ -460,10 +460,10 @@ mod tests {
     fn cancelling_never_touches_the_attempt_counter() {
         let mut mgr = ElevationManager::new();
         let now = Instant::now();
-        
+
         // FIX: Use a custom policy with max_attempts: 3 for this specific test.
         // This ensures that the 2nd failure results in a Failure, not a LockedOut.
-        // If cancel() was bugged and incremented the counter, this 2nd attempt would 
+        // If cancel() was bugged and incremented the counter, this 2nd attempt would
         // actually be the 3rd failure, resulting in LockedOut and failing the test.
         let custom_auth_policy = AuthPolicy {
             pam_service: "test".into(),
@@ -493,7 +493,6 @@ mod tests {
             .unwrap();
         assert!(matches!(outcome.outcome, AuthOutcome::Failure { .. }));
     }
-
 
     #[test]
     fn max_pending_per_session_is_enforced() {
