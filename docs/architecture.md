@@ -120,11 +120,17 @@ check below.
   `authentication` already does for unlock. mitos-service itself is a
   separate component this repo has no visibility into.
 - **mitos-services** (plural) -- easy to misread as the same thing as
-  the above, and deliberately not -- is the process supervisor and
-  isn't integrated yet. `power::SystemPowerBackend` is the seam where
-  a real install should route suspend/reboot/poweroff through it (to
-  stop services in dependency order) instead of calling `reboot(2)`
-  directly the way `power::DirectBackend` does today.
+  the above, and deliberately not -- is the process supervisor.
+  `power::SystemPowerBackend` has two implementations: `DirectBackend`
+  (calls `reboot(2)`/writes `/sys/power/state` itself -- correct for a
+  minimal standalone boot with no supervisor running) and
+  `SupervisedBackend` (signals PID 1/mitos-init the same way
+  `reboot`/`poweroff` command-line tools do, so mitos-services stops
+  every supervised service in dependency order first). `[power].backend`
+  in `session.toml` picks which one; see `power/supervised.rs`'s doc
+  comment for exactly which signal means what, and for the one part of
+  this still unconfirmed -- mitos-init's own side of that relay, since
+  there's no mitos-init source in this project yet to check it against.
 
 ## Known gaps
 
