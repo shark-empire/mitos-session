@@ -1,4 +1,4 @@
-use super::{DirectBackend, SystemPowerBackend};
+use super::SystemPowerBackend;
 use crate::errors::{Result, SessionError};
 use crate::ipc::{ConnRegistry, Event};
 use crate::lock::{InhibitWhat, LockManager, LockPolicy};
@@ -9,12 +9,13 @@ use std::time::Duration;
 /// Suspend the machine: refuse outright if a `Block` inhibitor is
 /// held, give `Delay` inhibitors `grace` to finish up, lock every
 /// session first if `lock_on_suspend` is set and tell each registered
-/// compositor to prepare, then hand off to the kernel.
+/// compositor to prepare, then hand off to `backend`.
 pub fn suspend(
     sessions: &SessionManager,
     locks: &mut LockManager,
     lock_policy: &LockPolicy,
     registry: &ConnRegistry,
+    backend: &dyn SystemPowerBackend,
     grace: Duration,
 ) -> Result<()> {
     if locks.inhibitors.blocks(InhibitWhat::Suspend) {
@@ -42,5 +43,5 @@ pub fn suspend(
         }
     }
 
-    DirectBackend.suspend()
+    backend.suspend()
 }
