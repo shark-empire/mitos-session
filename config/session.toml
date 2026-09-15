@@ -50,6 +50,13 @@ allow_suspend = true
 allow_reboot = true
 allow_poweroff = true
 suspend_inhibit_grace_secs = 2
+# "direct" calls the kernel itself -- right for a minimal standalone
+# boot. "supervised" asks mitos-init to relay to mitos-services first,
+# so managed services stop in dependency order before the machine
+# actually reboots/powers off -- use this once mitos-services is part
+# of the install. Suspend behaves the same either way (see
+# power/supervised.rs).
+backend = "direct"
 
 [ipc]
 socket_path = "/run/mitos-session/session.sock"
