@@ -8,6 +8,7 @@ use super::settings::{
     AuthSettings, ElevationSettings, IdleSettings, IpcSettings, LockSettings, LoggingSettings,
     PowerSettings, SeatSettings, SessionSettings,
 };
+use crate::power::PowerBackendKind;
 use std::path::PathBuf;
 
 impl Default for SessionSettings {
@@ -84,6 +85,7 @@ impl Default for PowerSettings {
             allow_reboot: true,
             allow_poweroff: true,
             suspend_inhibit_grace_secs: 2,
+            backend: PowerBackendKind::Direct,
         }
     }
 }

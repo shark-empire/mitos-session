@@ -2,6 +2,7 @@
 //! (implemented in `defaults.rs`) so that a config file only needs to
 //! mention the keys it wants to override.
 
+use crate::power::PowerBackendKind;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -103,6 +104,7 @@ pub struct PowerSettings {
     pub allow_reboot: bool,
     pub allow_poweroff: bool,
     pub suspend_inhibit_grace_secs: u64,
+    pub backend: PowerBackendKind,
 }
 
 #[derive(Debug, Clone, Deserialize)]
