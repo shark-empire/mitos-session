@@ -374,8 +374,12 @@ impl Daemon {
             Request::Reboot => {
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
                 Some(
-                    match power::reboot(&mut self.sessions, &self.locks, &*self.power_backend, grace)
-                    {
+                    match power::reboot(
+                        &mut self.sessions,
+                        &self.locks,
+                        &*self.power_backend,
+                        grace,
+                    ) {
                         Ok(()) => Response::Ok,
                         Err(e) => Response::Error(e.to_string()),
                     },
