@@ -363,7 +363,7 @@ impl Daemon {
                         &mut self.locks,
                         &lock_policy,
                         &self.registry,
-                        &self.power_backend,
+                        &*self.power_backend,
                         grace,
                     ) {
                         Ok(()) => Response::Ok,
@@ -374,7 +374,7 @@ impl Daemon {
             Request::Reboot => {
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
                 Some(
-                    match power::reboot(&mut self.sessions, &self.locks, &self.power_backend, grace)
+                    match power::reboot(&mut self.sessions, &self.locks, &*self.power_backend, grace)
                     {
                         Ok(()) => Response::Ok,
                         Err(e) => Response::Error(e.to_string()),
@@ -387,7 +387,7 @@ impl Daemon {
                     match power::poweroff(
                         &mut self.sessions,
                         &self.locks,
-                        &self.power_backend,
+                        &*self.power_backend,
                         grace,
                     ) {
                         Ok(()) => Response::Ok,
@@ -825,7 +825,7 @@ impl Daemon {
                         &mut self.locks,
                         &lock_policy,
                         &self.registry,
-                        &self.power_backend,
+                        &*self.power_backend,
                         grace,
                     ) {
                         tracing::warn!(error = %e, "idle-triggered suspend did not proceed");
