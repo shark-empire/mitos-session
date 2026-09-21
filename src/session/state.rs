@@ -18,11 +18,15 @@ pub enum SessionState {
     /// Lock screen is up; only a successful authentication can leave
     /// this state.
     Locked,
+
+    suspended,
+    resuming,
     /// Logout in progress -- compositor and child processes are being
     /// torn down.
     Closing,
     /// Fully torn down; about to be removed from `SessionManager`.
     Closed,
+    crashed,
 }
 
 impl SessionState {
