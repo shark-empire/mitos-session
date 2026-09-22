@@ -84,10 +84,7 @@ where
 }
 
 fn classify_event(event: &udev::Event, fallback_seat: &str) -> Option<HotplugEvent> {
-    let subsystem = event
-        .subsystem()?
-        .to_string_lossy()
-        .into_owned();
+    let subsystem = event.subsystem()?.to_string_lossy().into_owned();
 
     if subsystem != "input" && subsystem != "drm" {
         return None;

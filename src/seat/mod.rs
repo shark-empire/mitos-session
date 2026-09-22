@@ -6,8 +6,8 @@ pub mod device;
 pub mod display;
 pub mod input;
 pub mod manager;
-pub mod seat;
 pub mod monitor;
+pub mod seat;
 
 pub use device::{enumerate, Device, DeviceKind};
 pub use display::{Display, DisplayBackend};
