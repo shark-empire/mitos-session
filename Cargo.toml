@@ -51,6 +51,10 @@ serde_json = "1"
 # Human-edited on-disk config only -- never on the IPC hot path.
 toml = "0.8"
 
+
+zeroize = { version = "1.8", features = ["alloc", "derive", "serde"] }
+
+
 thiserror = "1"
 
  #Async runtime (needed for signals, tasks, and async main)
