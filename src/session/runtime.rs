@@ -39,12 +39,7 @@ pub fn ensure_user_runtime_dir_in(base: &Path, uid: Uid, gid: Gid) -> Result<Pat
 /// The final ownership/permission checks are done through an
 /// `O_NOFOLLOW` directory file descriptor, not through path-based
 /// operations that could race with symlink replacement.
-pub fn ensure_named_runtime_dir(
-    base: &Path,
-    name: &str,
-    uid: Uid,
-    gid: Gid,
-) -> Result<PathBuf> {
+pub fn ensure_named_runtime_dir(base: &Path, name: &str, uid: Uid, gid: Gid) -> Result<PathBuf> {
     if name.is_empty() || name == "." || name == ".." || name.contains('/') {
         bail!("invalid runtime directory name: {name:?}");
     }
@@ -153,17 +148,11 @@ fn prepare_base(base: &Path) -> Result<()> {
     let meta = fs::symlink_metadata(base).context("failed to inspect runtime base directory")?;
 
     if meta.file_type().is_symlink() {
-        bail!(
-            "runtime base {} is a symlink; refusing",
-            base.display()
-        );
+        bail!("runtime base {} is a symlink; refusing", base.display());
     }
 
     if !meta.is_dir() {
-        bail!(
-            "runtime base {} is not a directory",
-            base.display()
-        );
+        bail!("runtime base {} is not a directory", base.display());
     }
 
     // The base should be traversable but not writable by normal users.
