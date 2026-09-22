@@ -39,11 +39,11 @@ impl Authenticator for PamAuthenticator {
         };
 
         // 2. Set the user and password directly.
-        //    Password::from() creates a secure PAM password object that 
+        //    Password::from() creates a secure PAM password object that
         //    zeroizes its memory when dropped. We pass a reference to our
         //    ZeroizingString, which PAM will copy internally.
         let pam_password = Password::from(req.password.as_str());
-        
+
         if let Err(e) = auth
             .get_handler()
             .set_user(&req.user_name, Some(pam_password))
@@ -58,28 +58,27 @@ impl Authenticator for PamAuthenticator {
                 // 4. Open session (establishes credentials, sets up env, etc.)
                 if let Err(e) = auth.open_session() {
                     tracing::warn!(error = %e, "PAM open_session failed after successful auth");
-                    // Depending on your PAM config, this might be fatal. 
+                    // Depending on your PAM config, this might be fatal.
                     // For now, we log it but consider auth successful.
                 }
                 Ok(AuthOutcome::Success)
             }
             Err(e) => {
                 tracing::warn!(
-                    target: "mitos_auth", 
-                    user = %req.user_name, 
-                    error = %e, 
+                    target: "mitos_auth",
+                    user = %req.user_name,
+                    error = %e,
                     "PAM authentication failed"
                 );
                 Ok(AuthOutcome::Failed)
             }
         }
-        
+
         // When this function returns, `auth` and `pam_password` are dropped.
         // The `pam` crate automatically zeroizes the password buffer in C memory.
         // Our `req.password` (ZeroizingString) is dropped by the caller when AuthRequest goes out of scope.
     }
 }
-
 
 #[cfg(test)]
 mod tests {
