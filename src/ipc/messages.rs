@@ -6,6 +6,40 @@ use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use zeroize::ZeroizingString;
 
+// --- NEW DATA STRUCTURES ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Account {
+    pub user_name: String,
+    pub display_name: String,
+    pub icon: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AccessibilitySettings {
+    pub screen_reader: bool,
+    pub high_contrast: bool,
+    pub large_text: bool,
+    pub reduce_motion: bool,
+    pub keyboard_navigation: bool,
+    pub sticky_keys: bool,
+    pub slow_keys: bool,
+    pub on_screen_keyboard: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationPolicy {
+    pub redact_bodies: bool,
+    pub suppress_banners: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemStatus {
+    pub network_online: bool,
+    pub battery_percent: Option<u8>,
+    pub battery_charging: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Permission {
     ScreenCapture,
@@ -17,6 +51,7 @@ pub enum Permission {
 /// variant is decided by `policy::security_policy`, not here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
+    
     /// Start a new session for `user_name`. Sent by whatever runs the
     /// login prompt after it has already verified the user's identity
     /// -- mitos-session does not re-authenticate here, it trusts the
@@ -106,6 +141,15 @@ pub enum Request {
         request_id: ElevationRequestId,
         response: ElevationResponse,
     },
+
+ // Phase 3: Login/Greeter queries
+    ListAccounts,
+    ListSessionTypes,
+    GetSystemStatus,
+    
+    // Phase 3: Accessibility
+    SetAccessibilitySettings(AccessibilitySettings),
+    GetAccessibilitySettings,
 }
 
 /// Direct reply to exactly one `Request` -- usually sent the moment
@@ -123,6 +167,10 @@ pub enum Response {
     Error(String),
     PermissionGranted,
     PermissionDenied(String),
+    Accounts(Vec<Account>),
+    SessionTypes(Vec<String>),
+    SystemStatus(SystemStatus),
+    AccessibilitySettings(AccessibilitySettings),
 }
 
 /// Messages mitos-session pushes to a registered compositor without
@@ -176,6 +224,15 @@ pub enum Event {
     HideElevationPrompt {
         request_id: ElevationRequestId,
     },
+
+    // Phase 3: State synchronization
+    SessionStateChanged { 
+        session_id: SessionId, 
+        state: String,      // e.g., "Active", "Locked"
+        locked: bool, 
+    },
+    NotificationPolicyChanged(NotificationPolicy),
+    SystemStatusChanged(SystemStatus),
 }
 
 /// Everything the server ever writes to a connection: either a direct
@@ -212,3 +269,6 @@ pub struct InhibitorInfo {
     pub why: String,
     pub mode: InhibitMode,
 }
+
+
+
