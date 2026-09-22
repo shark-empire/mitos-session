@@ -66,6 +66,21 @@ impl SeatManager {
         }
     }
 
+        /// Returns ONLY the devices strictly assigned to this seat.
+    /// If a device has no ID_SEAT, it defaults to seat0 (standard logind behavior).
+    pub fn get_devices_for_seat(&self, seat_id: &str) -> Vec<Device> {
+        let Some(seat) = self.seats.get(seat_id) else { return Vec::new(); };
+        
+        seat.devices.iter().filter(|dev| {
+            // If the device explicitly declares a seat, it must match.
+            if let Some(dev_seat) = &dev.seat_id {
+                dev_seat == seat_id
+            } else {
+                // Fallback: devices without ID_SEAT belong to seat0
+                seat_id == "seat0"
+            }
+        }).cloned().collect()
+    }
     /// Remove a device from a seat by syspath.
     ///
     /// Used by the live udev monitor when a device is removed.
