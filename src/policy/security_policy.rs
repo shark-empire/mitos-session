@@ -156,6 +156,12 @@ pub fn authorize(
             }
         }
 
+        Request::UpdateSystemStatus(_) => {
+    // Only root (mitos-network/mitos-audio running as system services) can push status
+    if peer.uid == 0 { Ok(()) } else { Err(SessionError::PermissionDenied("only system services can update status".into())) }
+}
+
+
         // Catch-all for any future Request variants added to the IPC protocol
         // that haven't been explicitly whitelisted here yet.
         _ => Err(SessionError::PermissionDenied(
