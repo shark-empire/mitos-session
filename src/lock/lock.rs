@@ -13,11 +13,11 @@ use std::time::Instant;
 /// so the compositor can show a different message ("Locked" vs "Session
 /// suspended") without mitos-session needing to know anything about
 /// presentation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LockReason {
     Manual,
     Idle,
-    Suspend,
+    Suspend, // <--- ADD THIS
 }
 
 #[derive(Debug, Default)]
