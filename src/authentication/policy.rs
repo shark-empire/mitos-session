@@ -1,26 +1,40 @@
-use crate::config::{AuthSettings, LockSettings};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
-/// Runtime authentication policy, built once from config: which PAM
-/// service to authenticate against, and how many failures are
-/// tolerated before a lockout (shared with `lock::policy`, since "too
-/// many bad passwords" and "how long the screen stays locked" are the
-/// same knob from the user's point of view).
 #[derive(Debug, Clone)]
 pub struct AuthPolicy {
-    pub pam_service: String,
-    pub allow_empty_password: bool,
     pub max_attempts: u32,
-    pub lockout: Duration,
+    pub base_lockout: Duration,
+    pub max_lockout: Duration,
 }
 
 impl AuthPolicy {
-    pub fn new(auth: &AuthSettings, lock: &LockSettings) -> Self {
-        Self {
-            pam_service: auth.pam_service.clone(),
-            allow_empty_password: auth.allow_empty_password,
-            max_attempts: lock.max_auth_attempts,
-            lockout: Duration::from_secs(lock.lockout_secs),
+    /// Calculates the lockout duration based on failed attempts.
+    /// Uses exponential backoff with deterministic jitter to prevent timing attacks.
+    pub fn lockout_duration(&self, failures: u32, session_id: &str) -> Duration {
+        if failures < self.max_attempts {
+            return Duration::ZERO;
         }
+
+        // Exponential backoff: base * 2^(failures - max_attempts)
+        let exponent = failures.saturating_sub(self.max_attempts).min(10);
+        let base_ms = self.base_lockout.as_millis() as u64;
+        let mut delay_ms = base_ms.saturating_mul(2u64.saturating_pow(exponent));
+        
+        // Cap at max_lockout
+        delay_ms = delay_ms.min(self.max_lockout.as_millis() as u64);
+
+        // Add jitter (up to 20% of the delay)
+        let jitter_max = delay_ms / 5;
+        
+        let mut hasher = DefaultHasher::new();
+        session_id.hash(&mut hasher);
+        failures.hash(&mut hasher);
+        let hash = hasher.finish();
+        
+        let jitter = (hash % (jitter_max + 1)) as u64;
+
+        Duration::from_millis(delay_ms + jitter)
     }
 }
