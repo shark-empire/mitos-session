@@ -7,6 +7,7 @@
 //! ever touched off this thread -- see README's "one thread, one
 //! brain" design note for why.
 
+use mitos_session::seat::monitor::{DeviceEvent, HotplugEvent, HotplugSink};
 use mitos_session::{
     authentication, config, elevation, errors, idle, ipc, launcher, lock, logging, policy, power,
     seat, session, signals, user,
@@ -72,6 +73,23 @@ fn run() -> Result<()> {
         .map_err(|e| {
             errors::SessionError::Protocol(format!("failed to register IPC channel: {e}"))
         })?;
+
+        // Live udev hotplug tracking.
+    //
+    // Startup enumeration remains the initial snapshot. This monitor
+    // updates the seat's device list when hardware is added/removed.
+    match seat::monitor::register(&handle, default_seat.clone()) {
+        Ok(()) => {
+            tracing::info!(seat = %default_seat, "registered live udev hotplug monitor");
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "failed to register udev hotplug monitor; continuing with startup snapshot only"
+            );
+        }
+    }
+
 
     // Idle tick: 1Hz is plenty for dim/lock/suspend thresholds measured
     // in tens of seconds to minutes, and cheap enough not to bother
@@ -995,6 +1013,8 @@ impl Daemon {
     }
 }
 
+
+
 fn session_info(ctx: &session::SessionContext) -> ipc::SessionInfo {
     ipc::SessionInfo {
         id: ctx.session.id,
@@ -1083,3 +1103,21 @@ fn resolve_elevation_requester(settings: &config::ElevationSettings) -> Option<u
         }
     }
 }
+
+impl HotplugSink for Daemon {
+    fn handle_hotplug(&mut self, event: HotplugEvent) {
+        let seat_id = event.seat.clone();
+
+        tracing::debug!(seat = %seat_id, ?event, "udev hotplug event");
+
+        match event.event {
+            DeviceEvent::Added(device) | DeviceEvent::Changed(device) => {
+                self.seats.add_device(&seat_id, device);
+            }
+            DeviceEvent::Removed(device) => {
+                self.seats.remove_device(&seat_id, &device.syspath);
+            }
+        }
+    }
+}
+
