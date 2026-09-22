@@ -158,7 +158,9 @@ fn unix_socket_peer_credentials_are_available() {
 #[test]
 #[ignore = "requires root and mitos-pam-test user"]
 fn pam_authenticator_validates_real_user() {
-    if !running_as_root() { return; }
+    if !running_as_root() {
+        return;
+    }
 
     let auth = PamAuthenticator::new("mitos-login"); // Must match /etc/pam.d/mitos-login
     let req = AuthRequest {
@@ -179,4 +181,3 @@ fn pam_authenticator_validates_real_user() {
     let outcome = auth.authenticate(&bad_req).unwrap();
     assert!(matches!(outcome, AuthOutcome::Failed));
 }
-
