@@ -4,7 +4,15 @@ use crate::lock::{InhibitMode, InhibitWhat, LockReason};
 use crate::session::{SessionId, SessionType};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
+use zeroize::ZeroizingString;
 
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Permission {
+    ScreenCapture,
+    RawInput,
+    GlobalShortcuts,
+}
 /// Messages a client -- mitos-gui, mitos-sessionctl, or any other
 /// authorized peer -- sends to mitos-session. Authorization for each
 /// variant is decided by `policy::security_policy`, not here.
@@ -39,11 +47,19 @@ pub enum Request {
     LockSession {
         session_id: SessionId,
     },
+    // CHANGE: String -> ZeroizingString
     Unlock {
         session_id: SessionId,
         user_name: String,
-        password: String,
+        password: ZeroizingString,
     },
+
+
+    CheckPermission {
+        session_id: SessionId,
+        app_uid: u32,
+        permission: Permission,
+           },
     /// Coalesced "input happened" ping -- resets the idle timer for a
     /// seat. Sent by the compositor, never carries raw input events.
     ReportActivity {
@@ -107,6 +123,8 @@ pub enum Response {
     InhibitGranted { inhibit_id: u64 },
     Inhibitors(Vec<InhibitorInfo>),
     Error(String),
+    PermissionGranted,
+    PermissionDenied(String),
 }
 
 /// Messages mitos-session pushes to a registered compositor without
