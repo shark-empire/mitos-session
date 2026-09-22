@@ -7,6 +7,7 @@ mod application;
 mod compositor;
 mod desktop;
 mod terminal;
+pub mod autostart;
 
 pub use application::Application;
 pub use compositor::{decide_restart, spawn_compositor, RestartDecision};
