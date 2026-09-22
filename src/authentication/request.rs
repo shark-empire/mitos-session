@@ -1,5 +1,5 @@
-use zeroize::ZeroizingString;
 use crate::session::SessionId;
+use zeroize::ZeroizingString;
 
 /// One unlock/login attempt waiting to be checked.
 #[derive(Debug, Clone)]
