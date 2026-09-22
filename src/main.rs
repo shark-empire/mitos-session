@@ -421,7 +421,7 @@ Request::TerminateSession { session_id } => {
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
                 Some(
                     match power::suspend(
-                        &self.sessions,
+                        &mut self.sessions,
                         &mut self.locks,
                         &lock_policy,
                         &self.registry,
