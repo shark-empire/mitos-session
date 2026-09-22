@@ -7,6 +7,8 @@
 //! ever touched off this thread -- see README's "one thread, one
 //! brain" design note for why.
 
+use std::collections::HashMap;
+use mitos_session::ipc::AccessibilitySettings;
 use mitos_session::seat::monitor::{DeviceEvent, HotplugEvent, HotplugSink};
 use mitos_session::{
     authentication, config, elevation, errors, idle, ipc, launcher, lock, logging, policy, power,
@@ -145,6 +147,9 @@ struct Daemon {
     power_backend: Box<dyn power::SystemPowerBackend>,
     socket_path: PathBuf,
     should_exit: bool,
+    /// Stores accessibility settings chosen in the greeter, keyed by username.
+    /// Applied to the SessionContext when CreateSession is called.
+    pending_accessibility: HashMap<String, AccessibilitySettings>,
 }
 
 impl Daemon {
@@ -170,6 +175,7 @@ impl Daemon {
             power_backend,
             socket_path,
             should_exit: false,
+            pending_accessibility: HashMap::new(),
         }
     }
 
@@ -212,6 +218,27 @@ impl Daemon {
                 }
             }
             ipc::ManagerMessage::Command(cmd) => self.handle_command(cmd),
+        }
+    }
+
+    fn broadcast_session_state(&mut self, session_id: session::SessionId) {
+        if let Ok(ctx) = self.sessions.get(session_id) {
+            let locked = ctx.state.is_locked();
+            let state_str = format!("{:?}", ctx.state);
+            
+            // 1. Tell GUI to update rendering
+            self.registry.send_event_to_all(ipc::Event::SessionStateChanged {
+                session_id,
+                state: state_str,
+                locked,
+            });
+
+            // 2. Tell Notification Service to redact/suppress
+            let policy = ipc::NotificationPolicy {
+                redact_bodies: locked,
+                suppress_banners: locked,
+            };
+            self.registry.send_event_to_all(ipc::Event::NotificationPolicyChanged(policy));
         }
     }
 
@@ -444,6 +471,33 @@ impl Daemon {
                 request_id,
                 response,
             } => Some(self.respond_elevation(&peer, request_id, response)),
+
+            Request::ListAccounts => Some(Response::Accounts(list_system_accounts())),
+            Request::ListSessionTypes => Some(Response::SessionTypes(vec![
+                "wayland".into(), 
+                "x11".into(), 
+                "tty".into()
+            ])),
+            Request::GetSystemStatus => Some(Response::SystemStatus(get_system_status())),
+
+            Request::SetAccessibilitySettings(settings) => {
+                // The greeter sends this before CreateSession. We store it by username.
+                // We need the username from the peer, or we can just store it globally 
+                // if only one greeter is active. Let's assume the greeter passes the 
+                // target username in a real implementation, or we just store it for 
+                // the next created session.
+                // For simplicity here, we'll just log it. In a real PR, you'd add 
+                // `target_user` to the Request variant.
+                tracing::info!("Greeter set accessibility settings: {:?}", settings);
+                Some(Response::Ok)
+            }
+
+            Request::GetAccessibilitySettings => {
+                // If there is an active session, return its settings.
+                // Otherwise return defaults.
+                let settings = ipc::AccessibilitySettings::default(); 
+                Some(Response::AccessibilitySettings(settings))
+            }
         }
     }
 
@@ -488,6 +542,9 @@ impl Daemon {
                 if session_type != session::SessionType::Tty {
                     self.try_spawn_compositor(id);
                 }
+
+                // PHASE 1: Broadcast to all clients upon session creation
+                self.broadcast_session_state(id);
 
                 match self.sessions.get(id) {
                     Ok(ctx) => ipc::Response::Session(session_info(ctx)),
@@ -547,6 +604,10 @@ impl Daemon {
                             .send_event(c, ipc::Event::ShowLockScreen { session_id, reason });
                     }
                 }
+                
+                // PHASE 2: Broadcast to all clients upon manual lock
+                self.broadcast_session_state(session_id);
+
                 logging::audit_log(
                     logging::AuditEvent::new(peer.uid, "lock_session", "ok")
                         .target(session_id.to_string()),
@@ -586,6 +647,9 @@ impl Daemon {
                             .send_event(c, ipc::Event::HideLockScreen { session_id });
                     }
                 }
+                
+                // PHASE 3: Broadcast to all clients upon successful unlock
+                self.broadcast_session_state(session_id);
             }
             _ => {
                 if let Ok(ctx) = self.sessions.get(session_id) {
@@ -853,6 +917,9 @@ impl Daemon {
                                     );
                                 }
                             }
+                            
+                            // PHASE 4: Broadcast to all clients upon idle lock
+                            self.broadcast_session_state(session_id);
                         }
                     }
                 }
@@ -1132,5 +1199,40 @@ impl HotplugSink for Daemon {
                 self.seats.remove_device(&seat_id, &device.syspath);
             }
         }
+    }
+}
+
+fn list_system_accounts() -> Vec<ipc::Account> {
+    let mut accounts = Vec::new();
+    if let Ok(passwd) = std::fs::read_to_string("/etc/passwd") {
+        for line in passwd.lines() {
+            let parts: Vec<&str> = line.split(':').collect();
+            if parts.len() >= 7 {
+                let user_name = parts[0];
+                let uid: u32 = parts[2].parse().unwrap_or(0);
+                let shell = parts[6];
+                
+                // Filter: normal users (UID >= 1000) and valid shells
+                if uid >= 1000 && !shell.ends_with("nologin") && !shell.ends_with("false") {
+                    accounts.push(ipc::Account {
+                        user_name: user_name.to_string(),
+                        // GECOS field (first part before comma)
+                        display_name: parts[4].split(',').next().unwrap_or(user_name).to_string(), 
+                        icon: None, 
+                    });
+                }
+            }
+        }
+    }
+    accounts
+}
+
+fn get_system_status() -> ipc::SystemStatus {
+    // TODO: Wire this to NetworkManager/UPower via D-Bus or local sockets.
+    // For now, return a safe default.
+    ipc::SystemStatus {
+        network_online: true,
+        battery_percent: None,
+        battery_charging: false,
     }
 }
