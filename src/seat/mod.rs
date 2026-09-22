@@ -2,11 +2,12 @@
 //! one session can be "active" on at a time (the classic multi-seat
 //! concept, and the reason VT switching exists on a single-seat box).
 
-mod device;
-mod display;
-mod input;
-mod manager;
-mod seat;
+pub mod device;
+pub mod display;
+pub mod input;
+pub mod manager;
+pub mod seat;
+pub mod monitor;
 
 pub use device::{enumerate, Device, DeviceKind};
 pub use display::{Display, DisplayBackend};
