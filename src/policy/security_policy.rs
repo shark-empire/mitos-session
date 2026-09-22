@@ -2,7 +2,7 @@ use crate::authentication::AuthPolicy;
 use crate::config::{AuthSettings, ElevationSettings, LockSettings};
 use crate::elevation::ElevationManager;
 use crate::errors::{Result, SessionError};
-use crate::ipc::{ConnId, PeerCred, Request};
+use crate::ipc::{ConnId, PeerCred, Permission, Request};
 use crate::session::{SessionId, SessionManager};
 use std::time::Duration;
 
@@ -29,7 +29,48 @@ pub fn authorize(
     request: &Request,
     sessions: &SessionManager,
     elevation: &ElevationManager,
-) -> Result<()> {
+) -> Result<(), SessionError> {
+    
+    // --- PERMISSION GATE CHECK (Applies to EVERYONE, including root) ---
+    // We check this first because if the session is locked, not even 
+    // root (asking on behalf of an app) should be granted raw input 
+    // or screen capture.
+    if let Request::CheckPermission {
+        session_id,
+        app_uid,
+        permission,
+    } = request
+    {
+        let ctx = sessions.get(*session_id)?;
+
+        // GATE 1: If session is locked, NO app gets raw input or screen capture.
+        if ctx.state.is_locked() {
+            match permission {
+                Permission::ScreenCapture
+                | Permission::RawInput
+                | Permission::GlobalShortcuts => {
+                    return Err(SessionError::PermissionDenied(
+                        "session is locked; sensitive permissions revoked".into(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        // GATE 2: App UID must match the peer UID to prevent spoofing.
+        // (Root is exempt for system services like mitos-service asking on behalf of a user app)
+        if peer.uid != 0 && peer.uid != *app_uid {
+            return Err(SessionError::PermissionDenied(
+                "peer UID does not match requested app UID".into(),
+            ));
+        }
+
+        // If it passed the gates, it's authorized.
+        // Future: Check persistent grant database here before returning Ok(())
+        return Ok(());
+    }
+
+    // --- BLANKET ROOT BYPASS ---
     if peer.uid == 0 {
         return Ok(());
     }
@@ -66,6 +107,7 @@ pub fn authorize(
         | Request::SessionStatus { session_id }
         | Request::LockSession { session_id }
         | Request::SwitchSession { session_id, .. } => owns(*session_id),
+        
         Request::Unlock { session_id, .. } => owns(*session_id),
 
         // Listing sessions/inhibitors, reporting activity, taking out
@@ -108,6 +150,12 @@ pub fn authorize(
                 _ => Err(SessionError::UnknownElevationRequest(*request_id)),
             }
         }
+
+        // Catch-all for any future Request variants added to the IPC protocol
+        // that haven't been explicitly whitelisted here yet.
+        _ => Err(SessionError::PermissionDenied(
+            "unauthorized request variant".into(),
+        )),
     }
 }
 
