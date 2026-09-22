@@ -1,5 +1,56 @@
 # mitos-session
 
+**The session, seat, lock, idle, authentication, and power manager for the MITOS operating system.**
+
+`mitos-session` is the central policy daemon that sits between the system init (`mitos-init`) and the user's desktop (`mitos-gui`). It owns the notion of "who is logged in, on which seat, in what state," and acts as the absolute authority for locking, idling, suspending, and permission-gating the machine.
+
+It does not draw a single pixel itself. All UI (lock screens, elevation prompts, greeters) is rendered by `mitos-gui` or `mitos-login`, which communicate with this daemon over a secure, binary IPC channel.
+
+## 🏗️ Architecture & Design Principles
+
+*   **One Thread, One Brain:** All session, seat, lock, and idle state lives on a single thread driven by a `calloop` event loop. No `Arc<Mutex<...>>` soup. Timers, signals, and IPC commands are just events dispatched to `&mut self` handlers.
+*   **Strict Process Isolation:** `mitos-session` runs as root to manage sockets and PAM, but spawns all user processes (compositors, shells, autostart apps) using `setsid()` and drops privileges to the user's UID/GID via `pre_exec` hooks.
+*   **Zero-Trust IPC:** Inter-process communication uses a length-prefixed `bincode` protocol over a Unix domain socket. Authorization is handled entirely via `SO_PEERCRED` (kernel-level peer UID/GID verification). There is no handshake authentication.
+*   **Real Linux Facilities:** Leverages `udev` for live hardware hotplug, `libpam` for real credential verification, and `sd_notify` for service manager readiness.
+
+## 🚀 Feature Highlights
+
+### Phase 1: Foundation & Hardware Reactivity
+*   **Secure `XDG_RUNTIME_DIR`:** Fd-based creation with `O_NOFOLLOW` symlink attack prevention and strict `0700` permission locking.
+*   **Environment Sanitization:** Strips dangerous inherited variables (`LD_PRELOAD`, `LD_LIBRARY_PATH`) and injects only safe XDG session variables.
+*   **Live `udev` Hotplug:** Replaces startup-only snapshots with a live `MonitorSocket` wired into `calloop` to track keyboards, mice, and DRM nodes dynamically.
+
+### Phase 2: Security & Authentication
+*   **Real PAM Stack:** Non-blocking PAM authentication with automatic memory zeroization (`ZeroizingString`) for passwords in transit and at rest.
+*   **Permission Gates:** Revokes `ScreenCapture` and `RawInput` permissions from all applications the millisecond the session enters a `Locked` state.
+*   **Exponential Backoff:** Cryptographically deterministic jitter on lockout timers to prevent timing attacks and brute-force attempts.
+
+### Phase 3: GUI Integration & State Sync
+*   **Lock-Screen Synchronization:** Broadcasts `SessionStateChanged` to all clients, ensuring the compositor renders the lock surface and blocks underlying windows.
+*   **Notification Redaction:** Automatically pushes `NotificationPolicy { redact_bodies: true }` to the notification service when locked.
+*   **Greeter IPC:** Allows `mitos-login` to query system accounts, session types, and accessibility settings before a session is created.
+
+### Phase 4: Resilience & Recovery
+*   **Crash Cascade:** If the compositor crashes $N$ times, the daemon escalates to a Shell restart. If the Shell fails, the session is forcefully terminated to prevent infinite crash loops.
+*   **Clean Teardown:** Uses negative PGID signaling (`kill(-pgid, SIGTERM)`) to instantly wipe out the entire session tree (compositor + autostart apps) on logout.
+*   **Stale Artifact Scrubbing:** Automatically deletes orphaned Wayland/X11 sockets if a session ends uncleanly (e.g., SIGKILL).
+
+### Phase 5: Power & Multi-Seat Polish
+*   **Suspend-Lock Invariant:** Forces the session into `SessionState::Suspended` *before* the hardware sleeps, guaranteeing a password prompt on wake.
+*   **XDG Autostart:** Parses `/etc/xdg/autostart` and `~/.config/autostart`, filtering by `OnlyShowIn=MITOS` and launching apps with dropped privileges.
+*   **Multi-Seat Isolation:** Strictly filters `udev` device lists by `ID_SEAT` to ensure inputs and displays are isolated per user on multi-GPU towers.
+
+## 🛠️ Building & Running
+
+### Prerequisites
+*   Rust 1.75+
+*   Linux kernel with `udev`, `PAM`, and `tmpfs` support.
+
+### Build
+```bash
+cargo build --release
+
+
 Session, seat, screen-lock, idle, authentication, and power manager for
 **MITOS**. `mitos-session` is the process that sits between the login
 prompt and your desktop: it owns the notion of "who is logged in, on
