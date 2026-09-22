@@ -13,6 +13,5 @@ pub use device::{enumerate, Device, DeviceKind};
 pub use display::{Display, DisplayBackend};
 pub use input::InputDevice;
 pub use manager::SeatManager;
-pub use seat::Seat;
 pub use monitor::{DeviceEvent, HotplugEvent, HotplugSink};
-
+pub use seat::Seat;
