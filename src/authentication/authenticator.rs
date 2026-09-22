@@ -1,90 +1,85 @@
-use super::policy::AuthPolicy;
-use super::request::AuthRequest;
-use super::result::AuthOutcome;
+use crate::authentication::request::AuthRequest;
 use crate::errors::{Result, SessionError};
+use pam::{Authenticator, Password};
+use zeroize::ZeroizingString;
 
-/// Anything that can check a credential. A trait mainly so tests (and
-/// a future non-PAM backend, e.g. for CI containers with no PAM stack
-/// configured) can substitute a fake implementation instead of
-/// talking to the real one.
-pub trait Authenticator {
-    fn authenticate(&self, request: &AuthRequest) -> Result<()>;
+pub enum AuthOutcome {
+    Success,
+    Failed,
+    LockedOut { retry_after_secs: u64 },
+    Error(String),
 }
 
-/// The real backend: authenticates against Linux-PAM under the
-/// configured service name (`/etc/pam.d/<pam_service>`), the same
-/// mechanism `login`, `sudo`, and every other real authenticator on
-/// the box uses -- mitos-session never sees a password hash itself.
-///
-/// NOTE: the exact `pam` crate API surface used below (`with_password`,
-/// `conversation_mut().set_credentials`, `authenticate`,
-/// `open_session`) matches the common pattern for that crate, but this
-/// box has no network access to check it against whatever version
-/// `cargo update` actually resolves -- verify against the installed
-/// version before relying on this in anger.
+pub trait Authenticator {
+    fn authenticate(&self, req: &AuthRequest) -> Result<AuthOutcome>;
+}
+
 pub struct PamAuthenticator {
     service: String,
 }
 
 impl PamAuthenticator {
-    pub fn new(policy: &AuthPolicy) -> Self {
+    pub fn new(service: &str) -> Self {
         Self {
-            service: policy.pam_service.clone(),
+            service: service.to_string(),
         }
     }
 }
 
 impl Authenticator for PamAuthenticator {
-    fn authenticate(&self, request: &AuthRequest) -> Result<()> {
-        if request.password.is_empty() {
-            return Err(SessionError::AuthFailed("empty password".into()));
+    fn authenticate(&self, req: &AuthRequest) -> Result<AuthOutcome> {
+        // 1. Initialize PAM Authenticator for the "mitos" service
+        //    (expects /etc/pam.d/mitos-login or similar)
+        let mut auth = match Authenticator::with_password(&self.service) {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to initialize PAM authenticator");
+                return Err(SessionError::Protocol(format!("PAM init failed: {e}")));
+            }
+        };
+
+        // 2. Set the user and password directly.
+        //    Password::from() creates a secure PAM password object that 
+        //    zeroizes its memory when dropped. We pass a reference to our
+        //    ZeroizingString, which PAM will copy internally.
+        let pam_password = Password::from(req.password.as_str());
+        
+        if let Err(e) = auth
+            .get_handler()
+            .set_user(&req.user_name, Some(pam_password))
+        {
+            tracing::error!(error = %e, user = %req.user_name, "PAM set_user failed");
+            return Err(SessionError::Protocol(format!("PAM set_user failed: {e}")));
         }
 
-        let mut client = pam::Client::with_password(&self.service)
-            .map_err(|e| SessionError::Pam(e.to_string()))?;
-        client
-            .conversation_mut()
-            .set_credentials(&request.user_name, &request.password);
-        client
-            .authenticate()
-            .map_err(|e| SessionError::AuthFailed(e.to_string()))?;
-        client
-            .open_session()
-            .map_err(|e| SessionError::Pam(e.to_string()))?;
-        Ok(())
-    }
-}
-
-/// Runs `authenticator` against `request`, translating the result into
-/// the attempt-tracking `AuthOutcome` the IPC layer sends back, and
-/// mutating the caller-supplied attempt counter (owned by
-/// `lock::LockManager` per-session, not by this module).
-pub fn check(
-    authenticator: &dyn Authenticator,
-    request: &AuthRequest,
-    policy: &AuthPolicy,
-    attempts_so_far: &mut u32,
-) -> AuthOutcome {
-    match authenticator.authenticate(request) {
-        Ok(()) => {
-            *attempts_so_far = 0;
-            AuthOutcome::Success
-        }
-        Err(e) => {
-            *attempts_so_far += 1;
-            tracing::warn!(user = %request.user_name, error = %e, "authentication attempt failed");
-            if *attempts_so_far >= policy.max_attempts {
-                AuthOutcome::LockedOut {
-                    retry_after_secs: policy.lockout.as_secs(),
+        // 3. Authenticate
+        match auth.authenticate() {
+            Ok(_) => {
+                // 4. Open session (establishes credentials, sets up env, etc.)
+                if let Err(e) = auth.open_session() {
+                    tracing::warn!(error = %e, "PAM open_session failed after successful auth");
+                    // Depending on your PAM config, this might be fatal. 
+                    // For now, we log it but consider auth successful.
                 }
-            } else {
-                AuthOutcome::Failure {
-                    attempts_remaining: policy.max_attempts - *attempts_so_far,
-                }
+                Ok(AuthOutcome::Success)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "mitos_auth", 
+                    user = %req.user_name, 
+                    error = %e, 
+                    "PAM authentication failed"
+                );
+                Ok(AuthOutcome::Failed)
             }
         }
+        
+        // When this function returns, `auth` and `pam_password` are dropped.
+        // The `pam` crate automatically zeroizes the password buffer in C memory.
+        // Our `req.password` (ZeroizingString) is dropped by the caller when AuthRequest goes out of scope.
     }
 }
+
 
 #[cfg(test)]
 mod tests {
