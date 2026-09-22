@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use zeroize::ZeroizingString;
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Permission {
     ScreenCapture,
@@ -54,12 +53,11 @@ pub enum Request {
         password: ZeroizingString,
     },
 
-
     CheckPermission {
         session_id: SessionId,
         app_uid: u32,
         permission: Permission,
-           },
+    },
     /// Coalesced "input happened" ping -- resets the idle timer for a
     /// seat. Sent by the compositor, never carries raw input events.
     ReportActivity {
