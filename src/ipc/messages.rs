@@ -51,7 +51,6 @@ pub enum Permission {
 /// variant is decided by `policy::security_policy`, not here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
-    
     /// Start a new session for `user_name`. Sent by whatever runs the
     /// login prompt after it has already verified the user's identity
     /// -- mitos-session does not re-authenticate here, it trusts the
@@ -142,11 +141,11 @@ pub enum Request {
         response: ElevationResponse,
     },
 
- // Phase 3: Login/Greeter queries
+    // Phase 3: Login/Greeter queries
     ListAccounts,
     ListSessionTypes,
     GetSystemStatus,
-    
+
     // Phase 3: Accessibility
     SetAccessibilitySettings(AccessibilitySettings),
     GetAccessibilitySettings,
@@ -226,10 +225,10 @@ pub enum Event {
     },
 
     // Phase 3: State synchronization
-    SessionStateChanged { 
-        session_id: SessionId, 
-        state: String,      // e.g., "Active", "Locked"
-        locked: bool, 
+    SessionStateChanged {
+        session_id: SessionId,
+        state: String, // e.g., "Active", "Locked"
+        locked: bool,
     },
     NotificationPolicyChanged(NotificationPolicy),
     SystemStatusChanged(SystemStatus),
@@ -269,6 +268,3 @@ pub struct InhibitorInfo {
     pub why: String,
     pub mode: InhibitMode,
 }
-
-
-
