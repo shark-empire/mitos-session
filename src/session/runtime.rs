@@ -2,6 +2,7 @@ use std::fs;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use anyhow::Result;
 
 use anyhow::{bail, Context, Result};
 use nix::unistd::{Gid, Uid};
@@ -161,5 +162,25 @@ fn prepare_base(base: &Path) -> Result<()> {
 
     debug!(path = %base.display(), "runtime base directory prepared");
 
+    Ok(())
+}
+
+/// Removes stale IPC sockets and runtime files left behind by an unclean exit.
+pub fn scrub_session_artifacts(runtime_dir: &Path) -> Result<()> {
+    let mitos_dir = runtime_dir.join("mitos-session");
+    if mitos_dir.exists() {
+        fs::remove_dir_all(&mitos_dir).ok();
+    }
+
+    // Remove standard Wayland/X11 sockets that might be left behind
+    let sockets = ["wayland-0", "wayland-0.lock", "X0", "X0-lock", "mitos-session.sock"];
+    for sock in sockets {
+        let p = runtime_dir.join(sock);
+        if p.exists() {
+            fs::remove_file(p).ok();
+        }
+    }
+
+    tracing::info!(path = %runtime_dir.display(), "scrubbed stale session artifacts");
     Ok(())
 }
