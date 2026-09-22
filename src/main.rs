@@ -280,27 +280,26 @@ impl Daemon {
                 seat_id,
                 session_type,
             } => Some(self.create_session(&peer, &user_name, seat_id, session_type)),
-            Request::TerminateSession { session_id } => {
-                Some(match self.sessions.terminate_session(session_id) {
-                    Ok(()) => {
-                        self.seats.detach_session(session_id);
-                        logging::audit_log(
-                            logging::AuditEvent::new(peer.uid, "terminate_session", "ok")
-                                .target(session_id.to_string()),
-                        );
-                        // A session that just ended can't answer (or
-                        // benefit from an answer to) any elevation
-                        // prompt still open for it -- close those out
-                        // rather than leaving mitos-service waiting on
-                        // a user who's no longer logged in.
-                        for abandoned in self.elevation.abandon_session(session_id) {
-                            self.notify_elevation_abandoned("session ended", abandoned);
-                        }
-                        Response::Ok
-                    }
-                    Err(e) => Response::Error(e.to_string()),
-                })
+Request::TerminateSession { session_id } => {
+    // PHASE 4: Kill processes and scrub artifacts before removing from registry
+    self.terminate_session_forced(session_id);
+
+    Some(match self.sessions.terminate_session(session_id) {
+        Ok(()) => {
+            self.seats.detach_session(session_id);
+            logging::audit_log(
+                logging::AuditEvent::new(peer.uid, "terminate_session", "ok")
+                    .target(session_id.to_string()),
+            );
+            for abandoned in self.elevation.abandon_session(session_id) {
+                self.notify_elevation_abandoned("session ended", abandoned);
             }
+            Response::Ok
+        }
+        Err(e) => Response::Error(e.to_string()),
+    })
+}
+
 
             Request::CheckPermission {
                 session_id,
@@ -565,15 +564,21 @@ impl Daemon {
     /// a warning and leave it in `Starting` on failure. Shared by
     /// `create_session` (first launch) and `handle_compositor_exit`
     /// (relaunch after a crash) so the two can't drift apart.
-    fn try_spawn_compositor(&mut self, id: session::SessionId) {
-        if let Ok(ctx) = self.sessions.get_mut(id) {
-            let binary = self.settings.session.compositor_binary.clone();
-            match launcher::spawn_compositor(&ctx.user, &ctx.environment, &binary) {
-                Ok(child) => ctx.compositor_process = Some(child),
-                Err(e) => tracing::warn!(session_id = id, error = %e, "failed to spawn compositor"),
+fn try_spawn_compositor(&mut self, id: session::SessionId) {
+    if let Ok(ctx) = self.sessions.get_mut(id) {
+        let binary = self.settings.session.compositor_binary.clone();
+        match launcher::spawn_compositor(&ctx.user, &ctx.environment, &binary) {
+            Ok(child) => {
+                // Because of setsid(), the child's PID is also its PGID
+                ctx.process_group = Some(child.id() as libc::pid_t);
+                ctx.compositor_process = Some(child);
             }
+            Err(e) => tracing::warn!(session_id = id, error = %e, "failed to spawn compositor"),
         }
     }
+}
+
+    
 
     fn lock_session(
         &mut self,
@@ -672,6 +677,30 @@ impl Daemon {
         );
         ipc::Response::AuthResult(outcome)
     }
+
+
+   /// Forcefully terminates a session's process group and scrubs its runtime artifacts.
+fn terminate_session_forced(&mut self, session_id: session::SessionId) {
+    if let Ok(ctx) = self.sessions.get(session_id) {
+        // 1. Kill the entire process group (PGID)
+        if let Some(pgid) = ctx.process_group {
+            tracing::warn!(session_id = %session_id, pgid = pgid, "sending SIGTERM to session process group");
+            unsafe {
+                // Negative PID sends signal to the process group
+                libc::kill(-pgid, libc::SIGTERM);
+            }
+        }
+
+        // 2. Scrub runtime artifacts
+        if let Some(runtime_dir_str) = ctx.environment.get("XDG_RUNTIME_DIR") {
+            let runtime_dir = PathBuf::from(runtime_dir_str);
+            if runtime_dir.exists() {
+                let _ = session::runtime::scrub_session_artifacts(&runtime_dir);
+            }
+        }
+    }
+}
+
 
     /// Handle `Request::RequestElevation`. Returns `Some(response)` for
     /// everything decidable immediately -- a malformed action, a bad
@@ -1023,77 +1052,60 @@ impl Daemon {
         }
     }
 
-    /// If `pid` was a session's compositor, clear it out and either
-    /// relaunch it or fall back to a terminal, per
-    /// `launcher::decide_restart`. If `pid` belongs to something else
-    /// (an autostart app, most likely), this is a no-op -- `reap_children`
-    /// already did the only thing that needed doing for it.
-    fn handle_compositor_exit(&mut self, pid: nix::unistd::Pid) {
-        let raw_pid = pid.as_raw() as u32;
+  fn handle_compositor_exit(&mut self, pid: nix::unistd::Pid) {
+    let raw_pid = pid.as_raw() as u32;
 
-        let found = self
-            .sessions
-            .iter_mut()
-            .find(|ctx| {
-                ctx.compositor_process.as_ref().map(std::process::Child::id) == Some(raw_pid)
-            })
-            .map(|ctx| {
-                ctx.compositor_process = None;
-                let stale_conn = ctx.compositor_conn.take();
-                (
-                    ctx.id(),
-                    ctx.session.user_name.clone(),
-                    ctx.compositor_restarts,
-                    stale_conn,
-                )
-            });
+    let found = self.sessions.iter_mut().find(|ctx| {
+        ctx.compositor_process.as_ref().map(std::process::Child::id) == Some(raw_pid)
+    }).map(|ctx| {
+        ctx.compositor_process = None;
+        let stale_conn = ctx.compositor_conn.take();
+        (ctx.id(), ctx.session.user_name.clone(), ctx.compositor_restarts, ctx.shell_restarts, stale_conn)
+    });
 
-        let Some((session_id, user_name, restarts, stale_conn)) = found else {
-            return;
-        };
+    let Some((session_id, user_name, comp_restarts, shell_restarts, stale_conn)) = found else { return; };
 
-        if let Some(conn) = stale_conn {
-            self.registry.unregister(conn);
-        }
+    if let Some(conn) = stale_conn {
+        self.registry.unregister(conn);
+    }
 
-        if let Ok(ctx) = self.sessions.get_mut(session_id) {
-            // Best-effort: if the session is already on its way out
-            // (`Closing`/`Closed`) this transition is simply invalid
-            // and ignored -- there's nothing to relaunch for a session
-            // that's being torn down anyway.
-            let _ = ctx.transition(session::SessionState::Starting);
-        }
+    if let Ok(ctx) = self.sessions.get_mut(session_id) {
+        let _ = ctx.transition(session::SessionState::Starting);
+    }
 
-        match launcher::decide_restart(restarts, self.settings.session.max_compositor_restarts) {
-            launcher::RestartDecision::Restart => {
-                tracing::warn!(session_id, %user_name, restarts, "compositor exited unexpectedly, restarting it");
-                if let Ok(ctx) = self.sessions.get_mut(session_id) {
+    let max_compositor_restarts = self.settings.session.max_compositor_restarts;
+
+    // PHASE 4: Recovery Cascade
+    if let Ok(ctx) = self.sessions.get_mut(session_id) {
+        match ctx.cascade {
+            session::RestartCascade::Compositor => {
+                if comp_restarts < max_compositor_restarts {
                     ctx.compositor_restarts += 1;
-                }
-                self.try_spawn_compositor(session_id);
-            }
-            launcher::RestartDecision::FallbackToTerminal => {
-                tracing::error!(session_id, %user_name, restarts, "compositor kept crashing, falling back to a terminal");
-                let fallback = self
-                    .sessions
-                    .get(session_id)
-                    .map(|ctx| launcher::spawn_fallback_terminal(&ctx.user, &ctx.environment));
-                match fallback {
-                    Ok(Ok(child)) => {
-                        if let Ok(ctx) = self.sessions.get_mut(session_id) {
-                            ctx.compositor_process = Some(child);
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        tracing::error!(session_id, error = %e, "failed to spawn fallback terminal too");
-                    }
-                    Err(e) => {
-                        tracing::error!(session_id, error = %e, "session vanished before a fallback terminal could be spawned");
-                    }
+                    tracing::warn!(session_id, %user_name, restarts = ctx.compositor_restarts, "compositor crashed, restarting");
+                    self.try_spawn_compositor(session_id);
+                } else {
+                    tracing::error!(session_id, %user_name, "compositor reached max restarts, escalating cascade");
+                    ctx.cascade = session::RestartCascade::Shell;
+                    ctx.compositor_restarts = 0;
+                    self.try_spawn_compositor(session_id); // In MITOS, compositor == shell usually
                 }
             }
+            session::RestartCascade::Shell => {
+                if shell_restarts < 2 {
+                    ctx.shell_restarts += 1;
+                    tracing::error!(session_id, %user_name, restarts = ctx.shell_restarts, "shell crashed, restarting");
+                    self.try_spawn_compositor(session_id);
+                } else {
+                    tracing::error!(session_id, %user_name, "shell failed cascade, terminating session");
+                    ctx.cascade = session::RestartCascade::Failed;
+                    self.terminate_session_forced(session_id);
+                }
+            }
+            _ => {}
         }
     }
+}
+
 }
 
 fn session_info(ctx: &session::SessionContext) -> ipc::SessionInfo {
