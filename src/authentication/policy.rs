@@ -4,6 +4,8 @@ use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct AuthPolicy {
+    pub pam_service: String,
+    pub allow_empty_password: bool,
     pub max_attempts: u32,
     pub base_lockout: Duration,
     pub max_lockout: Duration,
@@ -33,7 +35,12 @@ impl AuthPolicy {
         failures.hash(&mut hasher);
         let hash = hasher.finish();
 
-        let jitter = (hash % (jitter_max + 1)) as u64;
+        // Prevent division by zero if base_lockout is configured to 0
+        let jitter = if jitter_max > 0 {
+            (hash % (jitter_max + 1)) as u64
+        } else {
+            0
+        };
 
         Duration::from_millis(delay_ms + jitter)
     }
