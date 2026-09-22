@@ -84,6 +84,14 @@ pub fn authorize(
     };
 
     match request {
+        Request::ListAccounts
+        | Request::ListSessionTypes
+        | Request::GetSystemStatus
+        | Request::SetAccessibilitySettings(_)
+        | Request::GetAccessibilitySettings
+        | Request::ListSessions
+        | Request::ReportActivity { .. }
+            
         // Starting a session for someone else requires root (the
         // greeter/login prompt normally runs as root); starting one
         // for yourself is always fine.
