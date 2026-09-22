@@ -274,6 +274,19 @@ impl Daemon {
                     Err(e) => Response::Error(e.to_string()),
                 })
             }
+
+    Request::CheckPermission { session_id, app_uid, permission } => {
+    // If policy::authorize() passed, the permission is granted for now.
+    // In the future, you would check a persistent grants DB here.
+    tracing::debug!(
+        session_id = %session_id,
+        app_uid = app_uid,
+        ?permission,
+        "granted permission check"
+    );
+    Some(ipc::Response::PermissionGranted)
+  }
+
             Request::RegisterCompositor { session_id } => {
                 Some(match self.sessions.get_mut(session_id) {
                     Ok(ctx) => {
