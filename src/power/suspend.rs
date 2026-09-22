@@ -1,8 +1,8 @@
 use super::SystemPowerBackend;
 use crate::errors::{Result, SessionError};
 use crate::ipc::{ConnRegistry, Event};
-use crate::lock::{InhibitWhat, LockManager, LockPolicy};
-use crate::session::SessionManager;
+use crate::lock::{InhibitWhat, LockManager, LockPolicy, LockReason};
+use crate::session::{SessionManager, SessionState};
 use std::thread;
 use std::time::Duration;
 
@@ -11,7 +11,7 @@ use std::time::Duration;
 /// session first if `lock_on_suspend` is set and tell each registered
 /// compositor to prepare, then hand off to `backend`.
 pub fn suspend(
-    sessions: &SessionManager,
+    sessions: &mut SessionManager, // CHANGED: &mut to allow state transitions
     locks: &mut LockManager,
     lock_policy: &LockPolicy,
     registry: &ConnRegistry,
@@ -34,10 +34,24 @@ pub fn suspend(
         thread::sleep(grace);
     }
 
-    for ctx in sessions.list() {
+    for ctx in sessions.iter_mut() { // CHANGED: iter_mut()
         if lock_policy.lock_on_suspend {
-            let _ = locks.lock(ctx.id(), lock_policy);
+            if locks.lock(ctx.id(), lock_policy).is_ok() {
+                // --- PHASE 5: SUSPEND-LOCK INVARIANT ---
+                // Force the session into the Suspended state. 
+                // This guarantees that upon wake, the session is locked 
+                // and requires authentication, preventing "sleep-walk" attacks.
+                let _ = ctx.transition(SessionState::Suspended);
+                
+                if let Some(conn_id) = ctx.compositor_conn {
+                    registry.send_event(conn_id, Event::ShowLockScreen { 
+                        session_id: ctx.id(), 
+                        reason: LockReason::Suspend 
+                    });
+                }
+            }
         }
+        
         if let Some(conn_id) = ctx.compositor_conn {
             registry.send_event(conn_id, Event::PrepareForSleep);
         }
