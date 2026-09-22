@@ -341,6 +341,8 @@ Request::TerminateSession { session_id } => {
                             );
                         } else {
                             let _ = ctx.transition(session::SessionState::Active);
+
+                            launcher::autostart::launch_autostart_apps(&ctx.user, &ctx.environment);
                         }
                         Response::Ok
                     }
