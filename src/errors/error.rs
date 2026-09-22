@@ -23,6 +23,10 @@ pub enum SessionError {
     #[error("no such session: {0}")]
     UnknownSession(u32),
 
+    #[error("unknown session: {0}")]
+UnknownSession(crate::session::SessionId),
+
+
     #[error("no such inhibitor: {0}")]
     UnknownInhibitor(u64),
 
