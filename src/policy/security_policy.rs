@@ -30,10 +30,9 @@ pub fn authorize(
     sessions: &SessionManager,
     elevation: &ElevationManager,
 ) -> Result<(), SessionError> {
-    
     // --- PERMISSION GATE CHECK (Applies to EVERYONE, including root) ---
-    // We check this first because if the session is locked, not even 
-    // root (asking on behalf of an app) should be granted raw input 
+    // We check this first because if the session is locked, not even
+    // root (asking on behalf of an app) should be granted raw input
     // or screen capture.
     if let Request::CheckPermission {
         session_id,
@@ -46,9 +45,7 @@ pub fn authorize(
         // GATE 1: If session is locked, NO app gets raw input or screen capture.
         if ctx.state.is_locked() {
             match permission {
-                Permission::ScreenCapture
-                | Permission::RawInput
-                | Permission::GlobalShortcuts => {
+                Permission::ScreenCapture | Permission::RawInput | Permission::GlobalShortcuts => {
                     return Err(SessionError::PermissionDenied(
                         "session is locked; sensitive permissions revoked".into(),
                     ));
@@ -107,7 +104,7 @@ pub fn authorize(
         | Request::SessionStatus { session_id }
         | Request::LockSession { session_id }
         | Request::SwitchSession { session_id, .. } => owns(*session_id),
-        
+
         Request::Unlock { session_id, .. } => owns(*session_id),
 
         // Listing sessions/inhibitors, reporting activity, taking out
