@@ -146,6 +146,8 @@ pub enum Request {
     ListSessionTypes,
     GetSystemStatus,
 
+    UpdateSystemStatus(SystemStatus),
+
     // Phase 3: Accessibility
     SetAccessibilitySettings(AccessibilitySettings),
     GetAccessibilitySettings,
