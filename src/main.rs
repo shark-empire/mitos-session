@@ -74,7 +74,7 @@ fn run() -> Result<()> {
             errors::SessionError::Protocol(format!("failed to register IPC channel: {e}"))
         })?;
 
-        // Live udev hotplug tracking.
+    // Live udev hotplug tracking.
     //
     // Startup enumeration remains the initial snapshot. This monitor
     // updates the seat's device list when hardware is added/removed.
@@ -89,7 +89,6 @@ fn run() -> Result<()> {
             );
         }
     }
-
 
     // Idle tick: 1Hz is plenty for dim/lock/suspend thresholds measured
     // in tens of seconds to minutes, and cheap enough not to bother
@@ -1013,8 +1012,6 @@ impl Daemon {
     }
 }
 
-
-
 fn session_info(ctx: &session::SessionContext) -> ipc::SessionInfo {
     ipc::SessionInfo {
         id: ctx.session.id,
@@ -1120,4 +1117,3 @@ impl HotplugSink for Daemon {
         }
     }
 }
-
