@@ -275,6 +275,13 @@ impl Daemon {
         use ipc::{Event, Request, Response};
 
         match request {
+
+            Request::UpdateSystemStatus(status) => {
+    // Broadcast to all connected GUI clients
+    self.registry.send_event_to_all(ipc::Event::SystemStatusChanged(status));
+    Some(Response::Ok)
+}
+
             Request::CreateSession {
                 user_name,
                 seat_id,
