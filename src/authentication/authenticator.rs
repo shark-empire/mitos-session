@@ -1,6 +1,6 @@
+use crate::authentication::policy::AuthPolicy;
 use crate::authentication::request::AuthRequest;
 use crate::errors::{Result, SessionError};
-use std::time::Duration;
 use zeroize::ZeroizingString;
 
 /// The outcome of an authentication attempt.
@@ -12,15 +12,6 @@ pub enum AuthOutcome {
     Error(String),
 }
 
-/// The policy governing authentication attempts and lockouts.
-#[derive(Debug, Clone)]
-pub struct AuthPolicy {
-    pub pam_service: String,
-    pub allow_empty_password: bool,
-    pub max_attempts: u32,
-    pub lockout: Duration,
-}
-
 /// Trait for underlying authentication backends (e.g., PAM, mock).
 pub trait Authenticator {
     fn authenticate(&self, req: &AuthRequest) -> Result<AuthOutcome>;
@@ -28,7 +19,7 @@ pub trait Authenticator {
 
 /// Real PAM authenticator.
 pub struct PamAuthenticator {
-    service: String,
+    pub service: String,
 }
 
 impl PamAuthenticator {
@@ -41,9 +32,6 @@ impl PamAuthenticator {
 
 impl Authenticator for PamAuthenticator {
     fn authenticate(&self, req: &AuthRequest) -> Result<AuthOutcome> {
-        // Note: The exact API depends on the specific `pam` crate version/fork you are using.
-        // This assumes a crate that provides `Authenticator::with_password` and `Password::from`.
-
         // We use a block to ensure PAM objects are dropped and zeroized immediately on error.
         let result = (|| -> Result<AuthOutcome> {
             let mut auth = pam::Authenticator::with_password(&self.service)
@@ -69,16 +57,10 @@ impl Authenticator for PamAuthenticator {
                         error = %e,
                         "PAM authentication failed"
                     );
-                    // Return a generic Failed; the `check` function will calculate remaining attempts
-                    Ok(AuthOutcome::Failed {
-                        attempts_remaining: 0,
-                    })
+                    Ok(AuthOutcome::Failed { attempts_remaining: 0 }) 
                 }
             }
         })();
-
-        // `auth` and `pam_password` are dropped here, zeroizing C memory.
-        // `req.password` is dropped by the caller when AuthRequest goes out of scope.
 
         match result {
             Ok(outcome) => Ok(outcome),
@@ -91,65 +73,53 @@ impl Authenticator for PamAuthenticator {
 }
 
 /// Orchestrates an authentication attempt against a policy.
-///
-/// This function handles the attempt counting, empty password checks,
-/// and lockout logic, delegating the actual credential verification
-/// to the provided `Authenticator`.
 pub fn check(
     authenticator: &dyn Authenticator,
     req: &AuthRequest,
     policy: &AuthPolicy,
     attempts: &mut u32,
 ) -> AuthOutcome {
-    // 1. Check if already locked out
-    if *attempts >= policy.max_attempts {
-        return AuthOutcome::LockedOut {
-            retry_after_secs: policy.lockout.as_secs(),
-        };
-    }
-
-    // 2. Check empty password policy
+    // 1. Check empty password policy
     if !policy.allow_empty_password && req.password.is_empty() {
         *attempts += 1;
-        let remaining = policy.max_attempts.saturating_sub(*attempts);
-        return AuthOutcome::Failed {
-            attempts_remaining: remaining,
+    } else {
+        // 2. Delegate to backend
+        match authenticator.authenticate(req) {
+            Ok(AuthOutcome::Success) => {
+                *attempts = 0;
+                return AuthOutcome::Success;
+            }
+            Ok(AuthOutcome::Failed { .. }) | Err(_) => {
+                *attempts += 1;
+            }
+            Ok(other) => return other, // Pass through Error from backend
+        }
+    }
+
+    // 3. Check if locked out after this attempt
+    if *attempts >= policy.max_attempts {
+        // Format session_id to string for the deterministic jitter hash
+        let session_id_str = req.session_id.to_string(); 
+        let duration = policy.lockout_duration(*attempts, &session_id_str);
+        
+        return AuthOutcome::LockedOut {
+            retry_after_secs: duration.as_secs(),
         };
     }
 
-    // 3. Delegate to backend
-    match authenticator.authenticate(req) {
-        Ok(AuthOutcome::Success) => {
-            *attempts = 0;
-            AuthOutcome::Success
-        }
-        Ok(AuthOutcome::Failed { .. }) | Err(_) => {
-            *attempts += 1;
-            if *attempts >= policy.max_attempts {
-                AuthOutcome::LockedOut {
-                    retry_after_secs: policy.lockout.as_secs(),
-                }
-            } else {
-                let remaining = policy.max_attempts.saturating_sub(*attempts);
-                AuthOutcome::Failed {
-                    attempts_remaining: remaining,
-                }
-            }
-        }
-        Ok(other) => other, // Pass through LockedOut or Error from backend
-    }
+    let remaining = policy.max_attempts.saturating_sub(*attempts);
+    AuthOutcome::Failed { attempts_remaining: remaining }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     struct AlwaysFail;
     impl Authenticator for AlwaysFail {
         fn authenticate(&self, _request: &AuthRequest) -> Result<AuthOutcome> {
-            Ok(AuthOutcome::Failed {
-                attempts_remaining: 0,
-            })
+            Ok(AuthOutcome::Failed { attempts_remaining: 0 })
         }
     }
 
@@ -162,50 +132,50 @@ mod tests {
 
     fn request() -> AuthRequest {
         AuthRequest {
-            session_id: 1, // Adjust if your SessionId is a String/Uuid
+            session_id: 1, // Assuming SessionId implements Display
             user_name: "alice".into(),
             password: ZeroizingString::from("hunter2"),
         }
     }
 
-    #[test]
-    fn locks_out_after_max_attempts() {
-        let policy = AuthPolicy {
+    fn test_policy() -> AuthPolicy {
+        AuthPolicy {
             pam_service: "test".into(),
             allow_empty_password: false,
             max_attempts: 3,
-            lockout: Duration::from_secs(30),
-        };
-        let mut attempts = 0;
+            base_lockout: Duration::from_secs(30),
+            max_lockout: Duration::from_secs(300),
+        }
+    }
 
+    #[test]
+    fn locks_out_after_max_attempts() {
+        let policy = test_policy();
+        let mut attempts = 0;
+        
         assert!(matches!(
             check(&AlwaysFail, &request(), &policy, &mut attempts),
-            AuthOutcome::Failed {
-                attempts_remaining: 2
-            }
+            AuthOutcome::Failed { attempts_remaining: 2 }
         ));
         assert!(matches!(
             check(&AlwaysFail, &request(), &policy, &mut attempts),
-            AuthOutcome::Failed {
-                attempts_remaining: 1
-            }
+            AuthOutcome::Failed { attempts_remaining: 1 }
         ));
-        assert!(matches!(
-            check(&AlwaysFail, &request(), &policy, &mut attempts),
-            AuthOutcome::LockedOut {
-                retry_after_secs: 30
+        
+        // 3rd attempt triggers lockout. 
+        // Base is 30s, plus up to 20% jitter (6s). 
+        // So retry_after_secs should be between 30 and 36.
+        match check(&AlwaysFail, &request(), &policy, &mut attempts) {
+            AuthOutcome::LockedOut { retry_after_secs } => {
+                assert!(retry_after_secs >= 30 && retry_after_secs <= 36);
             }
-        ));
+            _ => panic!("Expected LockedOut"),
+        }
     }
 
     #[test]
     fn success_resets_attempt_counter() {
-        let policy = AuthPolicy {
-            pam_service: "test".into(),
-            allow_empty_password: false,
-            max_attempts: 3,
-            lockout: Duration::from_secs(30),
-        };
+        let policy = test_policy();
         let mut attempts = 2;
         assert_eq!(
             check(&AlwaysSucceed, &request(), &policy, &mut attempts),
