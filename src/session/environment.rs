@@ -108,13 +108,9 @@ impl Environment {
             .and_then(|n| n.to_str())
             .ok_or_else(|| SessionError::Protocol("runtime directory has no file name".into()))?;
 
-        let created = crate::session::runtime::ensure_named_runtime_dir(
-            base,
-            name,
-            user.uid,
-            user.gid,
-        )
-        .map_err(|e| SessionError::Protocol(e.to_string()))?;
+        let created =
+            crate::session::runtime::ensure_named_runtime_dir(base, name, user.uid, user.gid)
+                .map_err(|e| SessionError::Protocol(e.to_string()))?;
 
         if created != path {
             return Err(SessionError::Protocol(format!(
