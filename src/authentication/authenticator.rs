@@ -57,7 +57,9 @@ impl Authenticator for PamAuthenticator {
                         error = %e,
                         "PAM authentication failed"
                     );
-                    Ok(AuthOutcome::Failed { attempts_remaining: 0 }) 
+                    Ok(AuthOutcome::Failed {
+                        attempts_remaining: 0,
+                    })
                 }
             }
         })();
@@ -99,16 +101,18 @@ pub fn check(
     // 3. Check if locked out after this attempt
     if *attempts >= policy.max_attempts {
         // Format session_id to string for the deterministic jitter hash
-        let session_id_str = req.session_id.to_string(); 
+        let session_id_str = req.session_id.to_string();
         let duration = policy.lockout_duration(*attempts, &session_id_str);
-        
+
         return AuthOutcome::LockedOut {
             retry_after_secs: duration.as_secs(),
         };
     }
 
     let remaining = policy.max_attempts.saturating_sub(*attempts);
-    AuthOutcome::Failed { attempts_remaining: remaining }
+    AuthOutcome::Failed {
+        attempts_remaining: remaining,
+    }
 }
 
 #[cfg(test)]
@@ -119,7 +123,9 @@ mod tests {
     struct AlwaysFail;
     impl Authenticator for AlwaysFail {
         fn authenticate(&self, _request: &AuthRequest) -> Result<AuthOutcome> {
-            Ok(AuthOutcome::Failed { attempts_remaining: 0 })
+            Ok(AuthOutcome::Failed {
+                attempts_remaining: 0,
+            })
         }
     }
 
@@ -152,18 +158,22 @@ mod tests {
     fn locks_out_after_max_attempts() {
         let policy = test_policy();
         let mut attempts = 0;
-        
+
         assert!(matches!(
             check(&AlwaysFail, &request(), &policy, &mut attempts),
-            AuthOutcome::Failed { attempts_remaining: 2 }
+            AuthOutcome::Failed {
+                attempts_remaining: 2
+            }
         ));
         assert!(matches!(
             check(&AlwaysFail, &request(), &policy, &mut attempts),
-            AuthOutcome::Failed { attempts_remaining: 1 }
+            AuthOutcome::Failed {
+                attempts_remaining: 1
+            }
         ));
-        
-        // 3rd attempt triggers lockout. 
-        // Base is 30s, plus up to 20% jitter (6s). 
+
+        // 3rd attempt triggers lockout.
+        // Base is 30s, plus up to 20% jitter (6s).
         // So retry_after_secs should be between 30 and 36.
         match check(&AlwaysFail, &request(), &policy, &mut attempts) {
             AuthOutcome::LockedOut { retry_after_secs } => {
