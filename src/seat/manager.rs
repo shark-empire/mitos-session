@@ -102,9 +102,6 @@ impl SeatManager {
         }
     }
 
- 
-
-
     /// Make `session` the active one on `seat_id`, pushing whatever
     /// was active back onto the queue. Returns the session that was
     /// active before the switch, if any -- callers use this to tell
