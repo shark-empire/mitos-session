@@ -49,47 +49,6 @@ impl SeatManager {
         self.ensure_seat(seat_id).devices = devices;
     }
 
-    /// Add or replace a device on a seat.
-    ///
-    /// Used by the live udev monitor when a device is added or changed.
-    pub fn add_device(&mut self, seat_id: &str, device: Device) {
-        let seat = self.ensure_seat(seat_id);
-
-        if let Some(existing) = seat
-            .devices
-            .iter_mut()
-            .find(|d| d.syspath == device.syspath)
-        {
-            *existing = device;
-        } else {
-            seat.devices.push(device);
-        }
-    }
-
-        /// Returns ONLY the devices strictly assigned to this seat.
-    /// If a device has no ID_SEAT, it defaults to seat0 (standard logind behavior).
-    pub fn get_devices_for_seat(&self, seat_id: &str) -> Vec<Device> {
-        let Some(seat) = self.seats.get(seat_id) else { return Vec::new(); };
-        
-        seat.devices.iter().filter(|dev| {
-            // If the device explicitly declares a seat, it must match.
-            if let Some(dev_seat) = &dev.seat_id {
-                dev_seat == seat_id
-            } else {
-                // Fallback: devices without ID_SEAT belong to seat0
-                seat_id == "seat0"
-            }
-        }).cloned().collect()
-    }
-    /// Remove a device from a seat by syspath.
-    ///
-    /// Used by the live udev monitor when a device is removed.
-    pub fn remove_device(&mut self, seat_id: &str, syspath: &str) {
-        if let Ok(seat) = self.seat_mut(seat_id) {
-            seat.devices.retain(|d| d.syspath != syspath);
-        }
-    }
-
     /// Attach a newly-created session to a seat. If the seat has no
     /// active session yet, the new one becomes active immediately;
     /// otherwise it's queued behind whatever is already running (the
