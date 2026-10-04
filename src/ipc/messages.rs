@@ -4,48 +4,7 @@ use crate::lock::{InhibitMode, InhibitWhat, LockReason};
 use crate::session::{SessionId, SessionType};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
-use zeroize::ZeroizingString;
 
-// --- NEW DATA STRUCTURES ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Account {
-    pub user_name: String,
-    pub display_name: String,
-    pub icon: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AccessibilitySettings {
-    pub screen_reader: bool,
-    pub high_contrast: bool,
-    pub large_text: bool,
-    pub reduce_motion: bool,
-    pub keyboard_navigation: bool,
-    pub sticky_keys: bool,
-    pub slow_keys: bool,
-    pub on_screen_keyboard: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NotificationPolicy {
-    pub redact_bodies: bool,
-    pub suppress_banners: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SystemStatus {
-    pub network_online: bool,
-    pub battery_percent: Option<u8>,
-    pub battery_charging: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum Permission {
-    ScreenCapture,
-    RawInput,
-    GlobalShortcuts,
-}
 /// Messages a client -- mitos-gui, mitos-sessionctl, or any other
 /// authorized peer -- sends to mitos-session. Authorization for each
 /// variant is decided by `policy::security_policy`, not here.
@@ -80,17 +39,10 @@ pub enum Request {
     LockSession {
         session_id: SessionId,
     },
-    // CHANGE: String -> ZeroizingString
     Unlock {
         session_id: SessionId,
         user_name: String,
-        password: ZeroizingString,
-    },
-
-    CheckPermission {
-        session_id: SessionId,
-        app_uid: u32,
-        permission: Permission,
+        password: String,
     },
     /// Coalesced "input happened" ping -- resets the idle timer for a
     /// seat. Sent by the compositor, never carries raw input events.
@@ -140,17 +92,6 @@ pub enum Request {
         request_id: ElevationRequestId,
         response: ElevationResponse,
     },
-
-    // Phase 3: Login/Greeter queries
-    ListAccounts,
-    ListSessionTypes,
-    GetSystemStatus,
-
-    UpdateSystemStatus(SystemStatus),
-
-    // Phase 3: Accessibility
-    SetAccessibilitySettings(AccessibilitySettings),
-    GetAccessibilitySettings,
 }
 
 /// Direct reply to exactly one `Request` -- usually sent the moment
@@ -166,12 +107,6 @@ pub enum Response {
     InhibitGranted { inhibit_id: u64 },
     Inhibitors(Vec<InhibitorInfo>),
     Error(String),
-    PermissionGranted,
-    PermissionDenied(String),
-    Accounts(Vec<Account>),
-    SessionTypes(Vec<String>),
-    SystemStatus(SystemStatus),
-    AccessibilitySettings(AccessibilitySettings),
 }
 
 /// Messages mitos-session pushes to a registered compositor without
@@ -225,15 +160,6 @@ pub enum Event {
     HideElevationPrompt {
         request_id: ElevationRequestId,
     },
-
-    // Phase 3: State synchronization
-    SessionStateChanged {
-        session_id: SessionId,
-        state: String, // e.g., "Active", "Locked"
-        locked: bool,
-    },
-    NotificationPolicyChanged(NotificationPolicy),
-    SystemStatusChanged(SystemStatus),
 }
 
 /// Everything the server ever writes to a connection: either a direct
