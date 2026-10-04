@@ -35,37 +35,62 @@ impl MitosPowerBackend {
     /// `subscribe`, so none should arrive; skip defensively rather than
     /// mistake one for the reply.
     fn call(&self, method: &str) -> Result<()> {
-        let stream = UnixStream::connect(&self.socket_path)
-            .map_err(|e| SessionError::Protocol(format!("connecting to mitos-power at {}: {e}", self.socket_path.display())))?;
-        stream.set_read_timeout(Some(Duration::from_secs(10))).map_err(|e| SessionError::Protocol(format!("setting read timeout: {e}")))?;
-        let mut writer = stream.try_clone().map_err(|e| SessionError::Protocol(format!("cloning socket to mitos-power: {e}")))?;
-        writer.set_write_timeout(Some(Duration::from_secs(5))).map_err(|e| SessionError::Protocol(format!("setting write timeout: {e}")))?;
+        let stream = UnixStream::connect(&self.socket_path).map_err(|e| {
+            SessionError::Protocol(format!(
+                "connecting to mitos-power at {}: {e}",
+                self.socket_path.display()
+            ))
+        })?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .map_err(|e| SessionError::Protocol(format!("setting read timeout: {e}")))?;
+        let mut writer = stream
+            .try_clone()
+            .map_err(|e| SessionError::Protocol(format!("cloning socket to mitos-power: {e}")))?;
+        writer
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .map_err(|e| SessionError::Protocol(format!("setting write timeout: {e}")))?;
         let mut reader = BufReader::new(stream);
 
-        let request = json!({ "kind": "request", "id": "mitos-session", "method": method, "params": {} });
-        let mut line = serde_json::to_string(&request).map_err(|e| SessionError::Protocol(format!("encoding request to mitos-power: {e}")))?;
+        let request =
+            json!({ "kind": "request", "id": "mitos-session", "method": method, "params": {} });
+        let mut line = serde_json::to_string(&request)
+            .map_err(|e| SessionError::Protocol(format!("encoding request to mitos-power: {e}")))?;
         line.push('\n');
-        writer.write_all(line.as_bytes()).map_err(|e| SessionError::Protocol(format!("writing to mitos-power: {e}")))?;
+        writer
+            .write_all(line.as_bytes())
+            .map_err(|e| SessionError::Protocol(format!("writing to mitos-power: {e}")))?;
 
         loop {
             let mut raw = String::new();
-            let n = reader.read_line(&mut raw).map_err(|e| SessionError::Protocol(format!("reading from mitos-power: {e}")))?;
+            let n = reader
+                .read_line(&mut raw)
+                .map_err(|e| SessionError::Protocol(format!("reading from mitos-power: {e}")))?;
             if n == 0 {
-                return Err(SessionError::Protocol("mitos-power closed the connection without replying".into()));
+                return Err(SessionError::Protocol(
+                    "mitos-power closed the connection without replying".into(),
+                ));
             }
             let trimmed = raw.trim();
             if trimmed.is_empty() {
                 continue;
             }
-            let value: Value = serde_json::from_str(trimmed).map_err(|e| SessionError::Protocol(format!("parsing mitos-power reply: {e}")))?;
+            let value: Value = serde_json::from_str(trimmed)
+                .map_err(|e| SessionError::Protocol(format!("parsing mitos-power reply: {e}")))?;
             if value.get("kind").and_then(Value::as_str) != Some("response") {
                 continue;
             }
             return if value.get("ok").and_then(Value::as_bool).unwrap_or(false) {
                 Ok(())
             } else {
-                let message = value.get("error").and_then(|e| e.get("message")).and_then(Value::as_str).unwrap_or("unknown error");
-                Err(SessionError::Protocol(format!("mitos-power rejected {method}: {message}")))
+                let message = value
+                    .get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown error");
+                Err(SessionError::Protocol(format!(
+                    "mitos-power rejected {method}: {message}"
+                )))
             };
         }
     }
@@ -101,7 +126,11 @@ mod tests {
     /// no sleep-based race -- the OS queues the incoming connection in the
     /// listen backlog until the spawned thread calls `accept()`.
     fn fake_mitos_power(ok: bool, message: &'static str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("mitos-session-power-backend-test-{}-{}", std::process::id(), ok));
+        let dir = std::env::temp_dir().join(format!(
+            "mitos-session-power-backend-test-{}-{}",
+            std::process::id(),
+            ok
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let socket = dir.join("power.sock");
         let _ = std::fs::remove_file(&socket);
@@ -135,13 +164,18 @@ mod tests {
     #[test]
     fn error_reply_surfaces_the_message() {
         let socket = fake_mitos_power(false, "no 'disk' support reported by the kernel");
-        let err = MitosPowerBackend::new(socket).suspend().unwrap_err().to_string();
+        let err = MitosPowerBackend::new(socket)
+            .suspend()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("no 'disk' support"), "got: {err}");
     }
 
     #[test]
     fn unreachable_socket_is_an_error_not_a_panic() {
-        let missing = std::env::temp_dir().join(format!("mitos-session-no-power-{}", std::process::id())).join("absent.sock");
+        let missing = std::env::temp_dir()
+            .join(format!("mitos-session-no-power-{}", std::process::id()))
+            .join("absent.sock");
         assert!(MitosPowerBackend::new(missing).poweroff().is_err());
     }
 }

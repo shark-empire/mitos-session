@@ -68,7 +68,9 @@ pub enum PowerBackendKind {
 impl PowerBackendKind {
     pub fn make(&self, mitos_power_socket: &std::path::Path) -> Box<dyn SystemPowerBackend> {
         match self {
-            PowerBackendKind::MitosPower => Box::new(MitosPowerBackend::new(mitos_power_socket.to_path_buf())),
+            PowerBackendKind::MitosPower => {
+                Box::new(MitosPowerBackend::new(mitos_power_socket.to_path_buf()))
+            }
             PowerBackendKind::Direct => Box::new(DirectBackend),
             PowerBackendKind::Supervised => Box::new(SupervisedBackend),
         }

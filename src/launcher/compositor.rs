@@ -5,16 +5,16 @@ use crate::errors::{Result, SessionError};
 use crate::session::Environment;
 use crate::user::User;
 
-/// Spawn mitos-gui for a session. 
-/// 
+/// Spawn mitos-gui for a session.
+///
 /// We use a `pre_exec` hook to do two critical things before the child executes:
-/// 1. `setsid()`: Creates a new process group (PID == PGID). This allows 
-///    `mitos-session` to cleanly terminate the entire session tree (compositor 
+/// 1. `setsid()`: Creates a new process group (PID == PGID). This allows
+///    `mitos-session` to cleanly terminate the entire session tree (compositor
 ///    + all autostart apps) via negative PGID signaling during logout or crash recovery.
 /// 2. Privilege Dropping: Drops from root to the session user's UID/GID.
 pub fn spawn_compositor(user: &User, env: &Environment, binary: &str) -> Result<Child> {
     let mut cmd = std::process::Command::new(binary);
-    
+
     // Apply session environment variables
     for (k, v) in env.iter() {
         cmd.env(k, v);
@@ -31,7 +31,7 @@ pub fn spawn_compositor(user: &User, env: &Environment, binary: &str) -> Result<
             if libc::setsid() == -1 {
                 return Err(std::io::Error::last_os_error());
             }
-            
+
             // 2. Phase 2/4: Drop privileges from root to the session user
             // Order matters: setgroups -> setgid -> setuid
             if libc::setgroups(groups.len(), groups.as_ptr()) == -1 {
@@ -43,7 +43,7 @@ pub fn spawn_compositor(user: &User, env: &Environment, binary: &str) -> Result<
             if libc::setresuid(uid, uid, uid) == -1 {
                 return Err(std::io::Error::last_os_error());
             }
-            
+
             Ok(())
         });
     }
@@ -51,12 +51,12 @@ pub fn spawn_compositor(user: &User, env: &Environment, binary: &str) -> Result<
     cmd.spawn().map_err(SessionError::Io)
 }
 
-/// Spawn a fallback terminal (e.g., xterm or alacritty) when the 
+/// Spawn a fallback terminal (e.g., xterm or alacritty) when the
 /// compositor crash-restart cascade is exhausted.
 pub fn spawn_fallback_terminal(user: &User, env: &Environment) -> Result<Child> {
     // Change "xterm" to your preferred terminal (alacritty, foot, etc.)
-    let mut cmd = std::process::Command::new("xterm"); 
-    
+    let mut cmd = std::process::Command::new("xterm");
+
     for (k, v) in env.iter() {
         cmd.env(k, v);
     }
@@ -83,7 +83,7 @@ pub fn spawn_fallback_terminal(user: &User, env: &Environment) -> Result<Child> 
         });
     }
 
-   let child = cmd.spawn().map_err(SessionError::Io)?;
+    let child = cmd.spawn().map_err(SessionError::Io)?;
     Ok(child)
 }
 
