@@ -105,6 +105,8 @@ pub struct PowerSettings {
     pub allow_poweroff: bool,
     pub suspend_inhibit_grace_secs: u64,
     pub backend: PowerBackendKind,
+    /// mitos-power's IPC socket, used only when `backend = "mitos_power"`.
+    pub mitos_power_socket_path: std::path::PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize)]

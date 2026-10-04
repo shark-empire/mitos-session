@@ -85,7 +85,8 @@ impl Default for PowerSettings {
             allow_reboot: true,
             allow_poweroff: true,
             suspend_inhibit_grace_secs: 2,
-            backend: PowerBackendKind::Direct,
+            backend: PowerBackendKind::MitosPower,
+            mitos_power_socket_path: PathBuf::from("/run/mitos/power.sock"),
         }
     }
 }
