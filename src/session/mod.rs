@@ -6,7 +6,6 @@ mod context;
 mod environment;
 mod lifecycle;
 mod manager;
-pub mod runtime;
 #[allow(clippy::module_inception)]
 mod session;
 mod state;
