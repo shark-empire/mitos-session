@@ -7,9 +7,6 @@
 //! ever touched off this thread -- see README's "one thread, one
 //! brain" design note for why.
 
-use std::collections::HashMap;
-use mitos_session::ipc::AccessibilitySettings;
-use mitos_session::seat::monitor::{DeviceEvent, HotplugEvent, HotplugSink};
 use mitos_session::{
     authentication, config, elevation, errors, idle, ipc, launcher, lock, logging, policy, power,
     seat, session, signals, user,
@@ -76,22 +73,6 @@ fn run() -> Result<()> {
             errors::SessionError::Protocol(format!("failed to register IPC channel: {e}"))
         })?;
 
-    // Live udev hotplug tracking.
-    //
-    // Startup enumeration remains the initial snapshot. This monitor
-    // updates the seat's device list when hardware is added/removed.
-    match seat::monitor::register(&handle, default_seat.clone()) {
-        Ok(()) => {
-            tracing::info!(seat = %default_seat, "registered live udev hotplug monitor");
-        }
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "failed to register udev hotplug monitor; continuing with startup snapshot only"
-            );
-        }
-    }
-
     // Idle tick: 1Hz is plenty for dim/lock/suspend thresholds measured
     // in tens of seconds to minutes, and cheap enough not to bother
     // with a per-seat timer tree.
@@ -147,9 +128,6 @@ struct Daemon {
     power_backend: Box<dyn power::SystemPowerBackend>,
     socket_path: PathBuf,
     should_exit: bool,
-    /// Stores accessibility settings chosen in the greeter, keyed by username.
-    /// Applied to the SessionContext when CreateSession is called.
-    pending_accessibility: HashMap<String, AccessibilitySettings>,
 }
 
 impl Daemon {
@@ -161,7 +139,7 @@ impl Daemon {
         let mut elevation = elevation::ElevationManager::new();
         elevation.set_requester_uid(resolve_elevation_requester(&settings.elevation));
 
-        let power_backend = settings.power.backend.make();
+        let power_backend = settings.power.backend.make(&settings.power.mitos_power_socket_path);
 
         Self {
             settings,
@@ -175,7 +153,6 @@ impl Daemon {
             power_backend,
             socket_path,
             should_exit: false,
-            pending_accessibility: HashMap::new(),
         }
     }
 
@@ -211,34 +188,10 @@ impl Daemon {
                 // waiting on their answer. Either way, nobody's left
                 // to resolve them normally.
                 for abandoned in self.elevation.abandon_connection(conn_id) {
-                    self.notify_elevation_abandoned(
-                        "a required connection disconnected",
-                        abandoned,
-                    );
+                    self.notify_elevation_abandoned("a required connection disconnected", abandoned);
                 }
             }
             ipc::ManagerMessage::Command(cmd) => self.handle_command(cmd),
-        }
-    }
-
-    fn broadcast_session_state(&mut self, session_id: session::SessionId) {
-        if let Ok(ctx) = self.sessions.get(session_id) {
-            let locked = ctx.state.is_locked();
-            let state_str = format!("{:?}", ctx.state);
-            
-            // 1. Tell GUI to update rendering
-            self.registry.send_event_to_all(ipc::Event::SessionStateChanged {
-                session_id,
-                state: state_str,
-                locked,
-            });
-
-            // 2. Tell Notification Service to redact/suppress
-            let policy = ipc::NotificationPolicy {
-                redact_bodies: locked,
-                suppress_banners: locked,
-            };
-            self.registry.send_event_to_all(ipc::Event::NotificationPolicyChanged(policy));
         }
     }
 
@@ -275,55 +228,32 @@ impl Daemon {
         use ipc::{Event, Request, Response};
 
         match request {
-
-            Request::UpdateSystemStatus(status) => {
-    // Broadcast to all connected GUI clients
-    self.registry.send_event_to_all(ipc::Event::SystemStatusChanged(status));
-    Some(Response::Ok)
-}
-
             Request::CreateSession {
                 user_name,
                 seat_id,
                 session_type,
             } => Some(self.create_session(&peer, &user_name, seat_id, session_type)),
-Request::TerminateSession { session_id } => {
-    // PHASE 4: Kill processes and scrub artifacts before removing from registry
-    self.terminate_session_forced(session_id);
-
-    Some(match self.sessions.terminate_session(session_id) {
-        Ok(()) => {
-            self.seats.detach_session(session_id);
-            logging::audit_log(
-                logging::AuditEvent::new(peer.uid, "terminate_session", "ok")
-                    .target(session_id.to_string()),
-            );
-            for abandoned in self.elevation.abandon_session(session_id) {
-                self.notify_elevation_abandoned("session ended", abandoned);
+            Request::TerminateSession { session_id } => {
+                Some(match self.sessions.terminate_session(session_id) {
+                    Ok(()) => {
+                        self.seats.detach_session(session_id);
+                        logging::audit_log(
+                            logging::AuditEvent::new(peer.uid, "terminate_session", "ok")
+                                .target(session_id.to_string()),
+                        );
+                        // A session that just ended can't answer (or
+                        // benefit from an answer to) any elevation
+                        // prompt still open for it -- close those out
+                        // rather than leaving mitos-service waiting on
+                        // a user who's no longer logged in.
+                        for abandoned in self.elevation.abandon_session(session_id) {
+                            self.notify_elevation_abandoned("session ended", abandoned);
+                        }
+                        Response::Ok
+                    }
+                    Err(e) => Response::Error(e.to_string()),
+                })
             }
-            Response::Ok
-        }
-        Err(e) => Response::Error(e.to_string()),
-    })
-}
-
-
-            Request::CheckPermission {
-                session_id,
-                app_uid,
-                permission,
-            } => {
-                // If policy::authorize() passed, the permission is granted for now.
-                // In the future, you would check a persistent grants DB here.
-                tracing::debug!(
-                    session_id = %session_id,
-                    app_uid = app_uid,
-                    ?permission,
-                    "granted permission check"
-                );
-                Some(ipc::Response::PermissionGranted)
-            }
-
             Request::RegisterCompositor { session_id } => {
                 Some(match self.sessions.get_mut(session_id) {
                     Ok(ctx) => {
@@ -348,17 +278,15 @@ Request::TerminateSession { session_id } => {
                             );
                         } else {
                             let _ = ctx.transition(session::SessionState::Active);
-
-                            launcher::autostart::launch_autostart_apps(&ctx.user, &ctx.environment);
                         }
                         Response::Ok
                     }
                     Err(e) => Response::Error(e.to_string()),
                 })
             }
-            Request::ListSessions => Some(Response::Sessions(
-                self.sessions.list().map(session_info).collect(),
-            )),
+            Request::ListSessions => {
+                Some(Response::Sessions(self.sessions.list().map(session_info).collect()))
+            }
             Request::SessionStatus { session_id } => Some(match self.sessions.get(session_id) {
                 Ok(ctx) => Response::Session(session_info(ctx)),
                 Err(e) => Response::Error(e.to_string()),
@@ -426,29 +354,22 @@ Request::TerminateSession { session_id } => {
             Request::Suspend => {
                 let lock_policy = lock::LockPolicy::from(&self.settings.lock);
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
-                Some(
-                    match power::suspend(
-                        &mut self.sessions,
-                        &mut self.locks,
-                        &lock_policy,
-                        &self.registry,
-                        &*self.power_backend,
-                        grace,
-                    ) {
-                        Ok(()) => Response::Ok,
-                        Err(e) => Response::Error(e.to_string()),
-                    },
-                )
+                Some(match power::suspend(
+                    &self.sessions,
+                    &mut self.locks,
+                    &lock_policy,
+                    &self.registry,
+                    &self.power_backend,
+                    grace,
+                ) {
+                    Ok(()) => Response::Ok,
+                    Err(e) => Response::Error(e.to_string()),
+                })
             }
             Request::Reboot => {
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
                 Some(
-                    match power::reboot(
-                        &mut self.sessions,
-                        &self.locks,
-                        &*self.power_backend,
-                        grace,
-                    ) {
+                    match power::reboot(&mut self.sessions, &self.locks, &self.power_backend, grace) {
                         Ok(()) => Response::Ok,
                         Err(e) => Response::Error(e.to_string()),
                     },
@@ -456,17 +377,15 @@ Request::TerminateSession { session_id } => {
             }
             Request::PowerOff => {
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
-                Some(
-                    match power::poweroff(
-                        &mut self.sessions,
-                        &self.locks,
-                        &*self.power_backend,
-                        grace,
-                    ) {
-                        Ok(()) => Response::Ok,
-                        Err(e) => Response::Error(e.to_string()),
-                    },
-                )
+                Some(match power::poweroff(
+                    &mut self.sessions,
+                    &self.locks,
+                    &self.power_backend,
+                    grace,
+                ) {
+                    Ok(()) => Response::Ok,
+                    Err(e) => Response::Error(e.to_string()),
+                })
             }
             // Deferred: `None` means a prompt was opened and pushed to
             // the compositor, and this call's reply will come later
@@ -479,33 +398,6 @@ Request::TerminateSession { session_id } => {
                 request_id,
                 response,
             } => Some(self.respond_elevation(&peer, request_id, response)),
-
-            Request::ListAccounts => Some(Response::Accounts(list_system_accounts())),
-            Request::ListSessionTypes => Some(Response::SessionTypes(vec![
-                "wayland".into(), 
-                "x11".into(), 
-                "tty".into()
-            ])),
-            Request::GetSystemStatus => Some(Response::SystemStatus(get_system_status())),
-
-            Request::SetAccessibilitySettings(settings) => {
-                // The greeter sends this before CreateSession. We store it by username.
-                // We need the username from the peer, or we can just store it globally 
-                // if only one greeter is active. Let's assume the greeter passes the 
-                // target username in a real implementation, or we just store it for 
-                // the next created session.
-                // For simplicity here, we'll just log it. In a real PR, you'd add 
-                // `target_user` to the Request variant.
-                tracing::info!("Greeter set accessibility settings: {:?}", settings);
-                Some(Response::Ok)
-            }
-
-            Request::GetAccessibilitySettings => {
-                // If there is an active session, return its settings.
-                // Otherwise return defaults.
-                let settings = ipc::AccessibilitySettings::default(); 
-                Some(Response::AccessibilitySettings(settings))
-            }
         }
     }
 
@@ -551,9 +443,6 @@ Request::TerminateSession { session_id } => {
                     self.try_spawn_compositor(id);
                 }
 
-                // PHASE 1: Broadcast to all clients upon session creation
-                self.broadcast_session_state(id);
-
                 match self.sessions.get(id) {
                     Ok(ctx) => ipc::Response::Session(session_info(ctx)),
                     Err(e) => ipc::Response::Error(e.to_string()),
@@ -573,21 +462,15 @@ Request::TerminateSession { session_id } => {
     /// a warning and leave it in `Starting` on failure. Shared by
     /// `create_session` (first launch) and `handle_compositor_exit`
     /// (relaunch after a crash) so the two can't drift apart.
-fn try_spawn_compositor(&mut self, id: session::SessionId) {
-    if let Ok(ctx) = self.sessions.get_mut(id) {
-        let binary = self.settings.session.compositor_binary.clone();
-        match launcher::spawn_compositor(&ctx.user, &ctx.environment, &binary) {
-            Ok(child) => {
-                // Because of setsid(), the child's PID is also its PGID
-                ctx.process_group = Some(child.id() as libc::pid_t);
-                ctx.compositor_process = Some(child);
+    fn try_spawn_compositor(&mut self, id: session::SessionId) {
+        if let Ok(ctx) = self.sessions.get_mut(id) {
+            let binary = self.settings.session.compositor_binary.clone();
+            match launcher::spawn_compositor(&ctx.user, &ctx.environment, &binary) {
+                Ok(child) => ctx.compositor_process = Some(child),
+                Err(e) => tracing::warn!(session_id = id, error = %e, "failed to spawn compositor"),
             }
-            Err(e) => tracing::warn!(session_id = id, error = %e, "failed to spawn compositor"),
         }
     }
-}
-
-    
 
     fn lock_session(
         &mut self,
@@ -618,10 +501,6 @@ fn try_spawn_compositor(&mut self, id: session::SessionId) {
                             .send_event(c, ipc::Event::ShowLockScreen { session_id, reason });
                     }
                 }
-                
-                // PHASE 2: Broadcast to all clients upon manual lock
-                self.broadcast_session_state(session_id);
-
                 logging::audit_log(
                     logging::AuditEvent::new(peer.uid, "lock_session", "ok")
                         .target(session_id.to_string()),
@@ -661,9 +540,6 @@ fn try_spawn_compositor(&mut self, id: session::SessionId) {
                             .send_event(c, ipc::Event::HideLockScreen { session_id });
                     }
                 }
-                
-                // PHASE 3: Broadcast to all clients upon successful unlock
-                self.broadcast_session_state(session_id);
             }
             _ => {
                 if let Ok(ctx) = self.sessions.get(session_id) {
@@ -686,30 +562,6 @@ fn try_spawn_compositor(&mut self, id: session::SessionId) {
         );
         ipc::Response::AuthResult(outcome)
     }
-
-
-   /// Forcefully terminates a session's process group and scrubs its runtime artifacts.
-fn terminate_session_forced(&mut self, session_id: session::SessionId) {
-    if let Ok(ctx) = self.sessions.get(session_id) {
-        // 1. Kill the entire process group (PGID)
-        if let Some(pgid) = ctx.process_group {
-            tracing::warn!(session_id = %session_id, pgid = pgid, "sending SIGTERM to session process group");
-            unsafe {
-                // Negative PID sends signal to the process group
-                libc::kill(-pgid, libc::SIGTERM);
-            }
-        }
-
-        // 2. Scrub runtime artifacts
-        if let Some(runtime_dir_str) = ctx.environment.get("XDG_RUNTIME_DIR") {
-            let runtime_dir = PathBuf::from(runtime_dir_str);
-            if runtime_dir.exists() {
-                let _ = session::runtime::scrub_session_artifacts(&runtime_dir);
-            }
-        }
-    }
-}
-
 
     /// Handle `Request::RequestElevation`. Returns `Some(response)` for
     /// everything decidable immediately -- a malformed action, a bad
@@ -735,9 +587,7 @@ fn terminate_session_forced(&mut self, session_id: session::SessionId) {
 
         let elevation_policy = elevation::ElevationPolicy::from(&self.settings.elevation);
         if !elevation_policy.enabled {
-            return Some(ipc::Response::Error(
-                "elevation is disabled in config".into(),
-            ));
+            return Some(ipc::Response::Error("elevation is disabled in config".into()));
         }
 
         let ctx = match self.sessions.get(session_id) {
@@ -751,11 +601,9 @@ fn terminate_session_forced(&mut self, session_id: session::SessionId) {
                 user = %ctx.session.user_name,
                 "Elevation request rejected: user has no password configured."
             );
-            return Some(ipc::Response::AuthResult(
-                authentication::AuthOutcome::Error(
-                    "no password is configured for this account".into(),
-                ),
-            ));
+            return Some(ipc::Response::AuthResult(authentication::AuthOutcome::Error(
+                "no password is configured for this account".into(),
+            )));
         }
 
         let Some(compositor_conn) = ctx.compositor_conn else {
@@ -779,11 +627,9 @@ fn terminate_session_forced(&mut self, session_id: session::SessionId) {
                     logging::AuditEvent::new(peer.uid, "elevation_request", "locked_out")
                         .target(session_id.to_string()),
                 );
-                return Some(ipc::Response::AuthResult(
-                    authentication::AuthOutcome::LockedOut {
-                        retry_after_secs: secs,
-                    },
-                ));
+                return Some(ipc::Response::AuthResult(authentication::AuthOutcome::LockedOut {
+                    retry_after_secs: secs,
+                }));
             }
             Err(e) => {
                 tracing::warn!(session_id, error = %e, "elevation request rejected");
@@ -862,10 +708,8 @@ fn terminate_session_forced(&mut self, session_id: session::SessionId) {
             },
         );
         if resolved.terminal {
-            self.registry.send_event(
-                resolved.compositor_conn,
-                ipc::Event::HideElevationPrompt { request_id },
-            );
+            self.registry
+                .send_event(resolved.compositor_conn, ipc::Event::HideElevationPrompt { request_id });
             self.registry.send_response(
                 resolved.requester_conn,
                 ipc::Response::AuthResult(resolved.outcome.clone()),
@@ -873,15 +717,8 @@ fn terminate_session_forced(&mut self, session_id: session::SessionId) {
         }
 
         logging::audit_log(
-            logging::AuditEvent::new(
-                peer.uid,
-                "elevation_response",
-                format!("{:?}", resolved.outcome),
-            )
-            .target(format!(
-                "session={} request={request_id}",
-                resolved.session_id
-            )),
+            logging::AuditEvent::new(peer.uid, "elevation_response", format!("{:?}", resolved.outcome))
+                .target(format!("session={} request={request_id}", resolved.session_id)),
         );
 
         ipc::Response::AuthResult(resolved.outcome)
@@ -955,9 +792,6 @@ fn terminate_session_forced(&mut self, session_id: session::SessionId) {
                                     );
                                 }
                             }
-                            
-                            // PHASE 4: Broadcast to all clients upon idle lock
-                            self.broadcast_session_state(session_id);
                         }
                     }
                 }
@@ -968,7 +802,7 @@ fn terminate_session_forced(&mut self, session_id: session::SessionId) {
                         &mut self.locks,
                         &lock_policy,
                         &self.registry,
-                        &*self.power_backend,
+                        &self.power_backend,
                         grace,
                     ) {
                         tracing::warn!(error = %e, "idle-triggered suspend did not proceed");
@@ -1061,60 +895,77 @@ fn terminate_session_forced(&mut self, session_id: session::SessionId) {
         }
     }
 
-  fn handle_compositor_exit(&mut self, pid: nix::unistd::Pid) {
-    let raw_pid = pid.as_raw() as u32;
+    /// If `pid` was a session's compositor, clear it out and either
+    /// relaunch it or fall back to a terminal, per
+    /// `launcher::decide_restart`. If `pid` belongs to something else
+    /// (an autostart app, most likely), this is a no-op -- `reap_children`
+    /// already did the only thing that needed doing for it.
+    fn handle_compositor_exit(&mut self, pid: nix::unistd::Pid) {
+        let raw_pid = pid.as_raw() as u32;
 
-    let found = self.sessions.iter_mut().find(|ctx| {
-        ctx.compositor_process.as_ref().map(std::process::Child::id) == Some(raw_pid)
-    }).map(|ctx| {
-        ctx.compositor_process = None;
-        let stale_conn = ctx.compositor_conn.take();
-        (ctx.id(), ctx.session.user_name.clone(), ctx.compositor_restarts, ctx.shell_restarts, stale_conn)
-    });
+        let found = self
+            .sessions
+            .iter_mut()
+            .find(|ctx| {
+                ctx.compositor_process.as_ref().map(std::process::Child::id) == Some(raw_pid)
+            })
+            .map(|ctx| {
+                ctx.compositor_process = None;
+                let stale_conn = ctx.compositor_conn.take();
+                (
+                    ctx.id(),
+                    ctx.session.user_name.clone(),
+                    ctx.compositor_restarts,
+                    stale_conn,
+                )
+            });
 
-    let Some((session_id, user_name, comp_restarts, shell_restarts, stale_conn)) = found else { return; };
+        let Some((session_id, user_name, restarts, stale_conn)) = found else {
+            return;
+        };
 
-    if let Some(conn) = stale_conn {
-        self.registry.unregister(conn);
-    }
+        if let Some(conn) = stale_conn {
+            self.registry.unregister(conn);
+        }
 
-    if let Ok(ctx) = self.sessions.get_mut(session_id) {
-        let _ = ctx.transition(session::SessionState::Starting);
-    }
+        if let Ok(ctx) = self.sessions.get_mut(session_id) {
+            // Best-effort: if the session is already on its way out
+            // (`Closing`/`Closed`) this transition is simply invalid
+            // and ignored -- there's nothing to relaunch for a session
+            // that's being torn down anyway.
+            let _ = ctx.transition(session::SessionState::Starting);
+        }
 
-    let max_compositor_restarts = self.settings.session.max_compositor_restarts;
-
-    // PHASE 4: Recovery Cascade
-    if let Ok(ctx) = self.sessions.get_mut(session_id) {
-        match ctx.cascade {
-            session::RestartCascade::Compositor => {
-                if comp_restarts < max_compositor_restarts {
+        match launcher::decide_restart(restarts, self.settings.session.max_compositor_restarts) {
+            launcher::RestartDecision::Restart => {
+                tracing::warn!(session_id, %user_name, restarts, "compositor exited unexpectedly, restarting it");
+                if let Ok(ctx) = self.sessions.get_mut(session_id) {
                     ctx.compositor_restarts += 1;
-                    tracing::warn!(session_id, %user_name, restarts = ctx.compositor_restarts, "compositor crashed, restarting");
-                    self.try_spawn_compositor(session_id);
-                } else {
-                    tracing::error!(session_id, %user_name, "compositor reached max restarts, escalating cascade");
-                    ctx.cascade = session::RestartCascade::Shell;
-                    ctx.compositor_restarts = 0;
-                    self.try_spawn_compositor(session_id); // In MITOS, compositor == shell usually
+                }
+                self.try_spawn_compositor(session_id);
+            }
+            launcher::RestartDecision::FallbackToTerminal => {
+                tracing::error!(session_id, %user_name, restarts, "compositor kept crashing, falling back to a terminal");
+                let fallback = self
+                    .sessions
+                    .get(session_id)
+                    .map(|ctx| launcher::spawn_fallback_terminal(&ctx.user, &ctx.environment));
+                match fallback {
+                    Ok(Ok(child)) => {
+                        if let Ok(ctx) = self.sessions.get_mut(session_id) {
+                            ctx.compositor_process = Some(child);
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        tracing::error!(session_id, error = %e, "failed to spawn fallback terminal too");
+                    }
+                    Err(e) => {
+                        tracing::error!(session_id, error = %e, "session vanished before a fallback terminal could be spawned");
+                    }
                 }
             }
-            session::RestartCascade::Shell => {
-                if shell_restarts < 2 {
-                    ctx.shell_restarts += 1;
-                    tracing::error!(session_id, %user_name, restarts = ctx.shell_restarts, "shell crashed, restarting");
-                    self.try_spawn_compositor(session_id);
-                } else {
-                    tracing::error!(session_id, %user_name, "shell failed cascade, terminating session");
-                    ctx.cascade = session::RestartCascade::Failed;
-                    self.terminate_session_forced(session_id);
-                }
-            }
-            _ => {}
         }
     }
-}
-
 }
 
 fn session_info(ctx: &session::SessionContext) -> ipc::SessionInfo {
@@ -1203,57 +1054,5 @@ fn resolve_elevation_requester(settings: &config::ElevationSettings) -> Option<u
             );
             None
         }
-    }
-}
-
-impl HotplugSink for Daemon {
-    fn handle_hotplug(&mut self, event: HotplugEvent) {
-        let seat_id = event.seat.clone();
-
-        tracing::debug!(seat = %seat_id, ?event, "udev hotplug event");
-
-        match event.event {
-            DeviceEvent::Added(device) | DeviceEvent::Changed(device) => {
-                self.seats.add_device(&seat_id, device);
-            }
-            DeviceEvent::Removed(device) => {
-                self.seats.remove_device(&seat_id, &device.syspath);
-            }
-        }
-    }
-}
-
-fn list_system_accounts() -> Vec<ipc::Account> {
-    let mut accounts = Vec::new();
-    if let Ok(passwd) = std::fs::read_to_string("/etc/passwd") {
-        for line in passwd.lines() {
-            let parts: Vec<&str> = line.split(':').collect();
-            if parts.len() >= 7 {
-                let user_name = parts[0];
-                let uid: u32 = parts[2].parse().unwrap_or(0);
-                let shell = parts[6];
-                
-                // Filter: normal users (UID >= 1000) and valid shells
-                if uid >= 1000 && !shell.ends_with("nologin") && !shell.ends_with("false") {
-                    accounts.push(ipc::Account {
-                        user_name: user_name.to_string(),
-                        // GECOS field (first part before comma)
-                        display_name: parts[4].split(',').next().unwrap_or(user_name).to_string(), 
-                        icon: None, 
-                    });
-                }
-            }
-        }
-    }
-    accounts
-}
-
-fn get_system_status() -> ipc::SystemStatus {
-    // TODO: Wire this to NetworkManager/UPower via D-Bus or local sockets.
-    // For now, return a safe default.
-    ipc::SystemStatus {
-        network_online: true,
-        battery_percent: None,
-        battery_charging: false,
     }
 }
