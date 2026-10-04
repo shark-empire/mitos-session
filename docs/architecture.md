@@ -105,12 +105,34 @@ check below.
    prompt the same way step 6 would on an `Error` outcome, so
    mitos-service's connection is never left blocked forever.
 
-## Where mitos-gui, mitos-service, and mitos-services fit in
+## Where mitos-gui, mitos-power, mitos-service, and mitos-services fit in
 
 - **mitos-gui** never decides *whether* to lock, dim, suspend, or
   approve a privileged action. It renders what mitos-session tells it
   to and reports input activity, unlock attempts, and elevation
   answers back. See `../mitos-gui`.
+- **mitos-power** is the component that actually performs a suspend/
+  hibernate/shutdown/reboot at the kernel level -- `power::SystemPowerBackend`'s
+  default implementation, `MitosPowerBackend`, calls mitos-power's IPC
+  (plain NDJSON over its own Unix socket, unrelated to this project's
+  bincode framing -- see `power/mitos_power.rs`) instead of this project
+  touching `/sys/power/state`/`reboot(2)` directly. This project's own
+  inhibitor-check, session-locking and compositor-notification sequence
+  (`power/suspend.rs` etc.) is unchanged; only the final kernel transition
+  moved. Two other `SystemPowerBackend`s remain for when mitos-power isn't
+  the one in the picture: `DirectBackend` (calls the kernel itself --
+  for a mitos-power-less boot) and `SupervisedBackend` (signals PID 1/
+  mitos-init the same way the `reboot`/`poweroff` command-line tools do,
+  so mitos-services stops every supervised service in dependency order
+  first -- mitos-power's own config offers this same choice now that
+  it's the one usually performing the transition). `[power].backend` in
+  `session.toml` picks which of the three; see `power/supervised.rs`'s
+  doc comment for exactly which signal means what, and for the one part
+  of that path still unconfirmed -- mitos-init's own side of the relay,
+  since there's no mitos-init source in this project yet to check it
+  against. `MitosPowerBackend` has the same category of gap: it was
+  written against mitos-power's documented protocol, not a running
+  instance of it -- see README.md's status note.
 - **mitos-service** (singular) is the permission-policy daemon that
   owns MITOS's rulebook of what apps may do -- classifying an action's
   risk and deciding it needs a password is entirely its job, not
@@ -120,17 +142,8 @@ check below.
   `authentication` already does for unlock. mitos-service itself is a
   separate component this repo has no visibility into.
 - **mitos-services** (plural) -- easy to misread as the same thing as
-  the above, and deliberately not -- is the process supervisor.
-  `power::SystemPowerBackend` has two implementations: `DirectBackend`
-  (calls `reboot(2)`/writes `/sys/power/state` itself -- correct for a
-  minimal standalone boot with no supervisor running) and
-  `SupervisedBackend` (signals PID 1/mitos-init the same way
-  `reboot`/`poweroff` command-line tools do, so mitos-services stops
-  every supervised service in dependency order first). `[power].backend`
-  in `session.toml` picks which one; see `power/supervised.rs`'s doc
-  comment for exactly which signal means what, and for the one part of
-  this still unconfirmed -- mitos-init's own side of that relay, since
-  there's no mitos-init source in this project yet to check it against.
+  the above, and deliberately not -- is the process supervisor that
+  `SupervisedBackend`, above, ultimately routes through via mitos-init.
 
 ## Known gaps
 
