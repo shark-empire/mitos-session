@@ -1,47 +1,26 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use crate::config::{AuthSettings, LockSettings};
 use std::time::Duration;
 
+/// Runtime authentication policy, built once from config: which PAM
+/// service to authenticate against, and how many failures are
+/// tolerated before a lockout (shared with `lock::policy`, since "too
+/// many bad passwords" and "how long the screen stays locked" are the
+/// same knob from the user's point of view).
 #[derive(Debug, Clone)]
 pub struct AuthPolicy {
     pub pam_service: String,
     pub allow_empty_password: bool,
     pub max_attempts: u32,
-    pub base_lockout: Duration,
-    pub max_lockout: Duration,
+    pub lockout: Duration,
 }
 
 impl AuthPolicy {
-    /// Calculates the lockout duration based on failed attempts.
-    /// Uses exponential backoff with deterministic jitter to prevent timing attacks.
-    pub fn lockout_duration(&self, failures: u32, session_id: &str) -> Duration {
-        if failures < self.max_attempts {
-            return Duration::ZERO;
+    pub fn new(auth: &AuthSettings, lock: &LockSettings) -> Self {
+        Self {
+            pam_service: auth.pam_service.clone(),
+            allow_empty_password: auth.allow_empty_password,
+            max_attempts: lock.max_auth_attempts,
+            lockout: Duration::from_secs(lock.lockout_secs),
         }
-
-        // Exponential backoff: base * 2^(failures - max_attempts)
-        let exponent = failures.saturating_sub(self.max_attempts).min(10);
-        let base_ms = self.base_lockout.as_millis() as u64;
-        let mut delay_ms = base_ms.saturating_mul(2u64.saturating_pow(exponent));
-
-        // Cap at max_lockout
-        delay_ms = delay_ms.min(self.max_lockout.as_millis() as u64);
-
-        // Add jitter (up to 20% of the delay)
-        let jitter_max = delay_ms / 5;
-
-        let mut hasher = DefaultHasher::new();
-        session_id.hash(&mut hasher);
-        failures.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        // Prevent division by zero if base_lockout is configured to 0
-        let jitter = if jitter_max > 0 {
-            (hash % (jitter_max + 1)) as u64
-        } else {
-            0
-        };
-
-        Duration::from_millis(delay_ms + jitter)
     }
 }
