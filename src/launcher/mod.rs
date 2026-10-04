@@ -4,7 +4,6 @@
 //! one place privileges actually get dropped before `exec`.
 
 mod application;
-pub mod autostart;
 mod compositor;
 mod desktop;
 mod terminal;
