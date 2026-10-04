@@ -198,8 +198,11 @@ impl ElevationManager {
         now: Instant,
     ) -> Option<ElevationOutcome> {
         let pending = self.pending.get(&id)?;
-        let (session_id, compositor_conn, requester_conn) =
-            (pending.session_id, pending.compositor_conn, pending.requester_conn);
+        let (session_id, compositor_conn, requester_conn) = (
+            pending.session_id,
+            pending.compositor_conn,
+            pending.requester_conn,
+        );
 
         let entry = self.session_auth.entry(session_id).or_default();
         let outcome = check(authenticator, request, auth_policy, &mut entry.attempts);
@@ -210,7 +213,8 @@ impl ElevationManager {
             }
             AuthOutcome::LockedOut { .. } => {
                 entry.locked_out = true;
-                self.timeouts.start_lockout(session_id, now, auth_policy.lockout);
+                self.timeouts
+                    .start_lockout(session_id, now, auth_policy.lockout);
                 true
             }
             AuthOutcome::Failure { .. } => false,
@@ -290,14 +294,19 @@ impl ElevationManager {
         self.abandon_where(|p| p.compositor_conn == conn_id || p.requester_conn == conn_id)
     }
 
-    fn abandon_where(&mut self, mut predicate: impl FnMut(&PendingElevation) -> bool) -> Vec<AbandonedElevation> {
+    fn abandon_where(
+        &mut self,
+        mut predicate: impl FnMut(&PendingElevation) -> bool,
+    ) -> Vec<AbandonedElevation> {
         let ids: Vec<ElevationRequestId> = self
             .pending
             .iter()
             .filter(|(_, p)| predicate(p))
             .map(|(&id, _)| id)
             .collect();
-        ids.into_iter().filter_map(|id| self.take_abandoned(id)).collect()
+        ids.into_iter()
+            .filter_map(|id| self.take_abandoned(id))
+            .collect()
     }
 
     fn take_abandoned(&mut self, id: ElevationRequestId) -> Option<AbandonedElevation> {
@@ -368,7 +377,9 @@ mod tests {
     fn full_ask_answer_success_cycle() {
         let mut mgr = ElevationManager::new();
         let now = Instant::now();
-        let id = mgr.begin(1, 100, 200, &policy(), &auth_policy(), now).unwrap();
+        let id = mgr
+            .begin(1, 100, 200, &policy(), &auth_policy(), now)
+            .unwrap();
 
         assert_eq!(mgr.peek(id).unwrap().session_id, 1);
         assert_eq!(mgr.compositor_conn_for(id), Some(100));
@@ -389,15 +400,21 @@ mod tests {
     fn a_wrong_attempt_leaves_the_prompt_open_until_locked_out() {
         let mut mgr = ElevationManager::new();
         let now = Instant::now();
-        let id = mgr.begin(1, 100, 200, &policy(), &auth_policy(), now).unwrap();
+        let id = mgr
+            .begin(1, 100, 200, &policy(), &auth_policy(), now)
+            .unwrap();
 
-        let first = mgr.attempt(id, &AlwaysFail, &req(1), &auth_policy(), now).unwrap();
+        let first = mgr
+            .attempt(id, &AlwaysFail, &req(1), &auth_policy(), now)
+            .unwrap();
         assert!(matches!(first.outcome, AuthOutcome::Failure { .. }));
         assert!(!first.terminal);
         // Still open -- a second attempt against the same id works.
         assert!(mgr.compositor_conn_for(id).is_some());
 
-        let second = mgr.attempt(id, &AlwaysFail, &req(1), &auth_policy(), now).unwrap();
+        let second = mgr
+            .attempt(id, &AlwaysFail, &req(1), &auth_policy(), now)
+            .unwrap();
         assert!(matches!(second.outcome, AuthOutcome::LockedOut { .. }));
         assert!(second.terminal);
         assert!(mgr.compositor_conn_for(id).is_none());
@@ -407,7 +424,9 @@ mod tests {
     fn a_lockout_blocks_brand_new_requests_for_the_same_session() {
         let mut mgr = ElevationManager::new();
         let now = Instant::now();
-        let id = mgr.begin(1, 100, 200, &policy(), &auth_policy(), now).unwrap();
+        let id = mgr
+            .begin(1, 100, 200, &policy(), &auth_policy(), now)
+            .unwrap();
         mgr.attempt(id, &AlwaysFail, &req(1), &auth_policy(), now);
         mgr.attempt(id, &AlwaysFail, &req(1), &auth_policy(), now); // locks out
 
@@ -415,37 +434,51 @@ mod tests {
         assert!(matches!(second_request, Err(SessionError::LockedOut(_))));
 
         // A different session is unaffected.
-        assert!(mgr.begin(2, 100, 202, &policy(), &auth_policy(), now).is_ok());
+        assert!(mgr
+            .begin(2, 100, 202, &policy(), &auth_policy(), now)
+            .is_ok());
     }
 
     #[test]
     fn lockout_clears_once_its_timer_elapses() {
         let mut mgr = ElevationManager::new();
         let now = Instant::now();
-        let id = mgr.begin(1, 100, 200, &policy(), &auth_policy(), now).unwrap();
+        let id = mgr
+            .begin(1, 100, 200, &policy(), &auth_policy(), now)
+            .unwrap();
         mgr.attempt(id, &AlwaysFail, &req(1), &auth_policy(), now);
         mgr.attempt(id, &AlwaysFail, &req(1), &auth_policy(), now);
 
         let later = now + Duration::from_secs(31);
         mgr.clear_expired_lockouts(later);
-        assert!(mgr.begin(1, 100, 203, &policy(), &auth_policy(), later).is_ok());
+        assert!(mgr
+            .begin(1, 100, 203, &policy(), &auth_policy(), later)
+            .is_ok());
     }
 
     #[test]
     fn cancelling_never_touches_the_attempt_counter() {
         let mut mgr = ElevationManager::new();
         let now = Instant::now();
-        let id = mgr.begin(1, 100, 200, &policy(), &auth_policy(), now).unwrap();
+        let id = mgr
+            .begin(1, 100, 200, &policy(), &auth_policy(), now)
+            .unwrap();
         mgr.attempt(id, &AlwaysFail, &req(1), &auth_policy(), now);
 
-        let id2 = mgr.begin(1, 100, 201, &policy(), &auth_policy(), now).unwrap();
+        let id2 = mgr
+            .begin(1, 100, 201, &policy(), &auth_policy(), now)
+            .unwrap();
         let cancelled = mgr.cancel(id2).unwrap();
         assert_eq!(cancelled.outcome, AuthOutcome::Cancelled);
 
         // The one earlier failure is still all that's on the books --
         // one more wrong guess should fail, not lock out.
-        let id3 = mgr.begin(1, 100, 202, &policy(), &auth_policy(), now).unwrap();
-        let outcome = mgr.attempt(id3, &AlwaysFail, &req(1), &auth_policy(), now).unwrap();
+        let id3 = mgr
+            .begin(1, 100, 202, &policy(), &auth_policy(), now)
+            .unwrap();
+        let outcome = mgr
+            .attempt(id3, &AlwaysFail, &req(1), &auth_policy(), now)
+            .unwrap();
         assert!(matches!(outcome.outcome, AuthOutcome::Failure { .. }));
     }
 
@@ -453,8 +486,10 @@ mod tests {
     fn max_pending_per_session_is_enforced() {
         let mut mgr = ElevationManager::new();
         let now = Instant::now();
-        mgr.begin(1, 100, 200, &policy(), &auth_policy(), now).unwrap();
-        mgr.begin(1, 100, 201, &policy(), &auth_policy(), now).unwrap();
+        mgr.begin(1, 100, 200, &policy(), &auth_policy(), now)
+            .unwrap();
+        mgr.begin(1, 100, 201, &policy(), &auth_policy(), now)
+            .unwrap();
         let third = mgr.begin(1, 100, 202, &policy(), &auth_policy(), now);
         assert!(matches!(third, Err(SessionError::PermissionDenied(_))));
     }
@@ -463,7 +498,9 @@ mod tests {
     fn an_unanswered_prompt_expires_and_is_reported_once() {
         let mut mgr = ElevationManager::new();
         let now = Instant::now();
-        let id = mgr.begin(1, 100, 200, &policy(), &auth_policy(), now).unwrap();
+        let id = mgr
+            .begin(1, 100, 200, &policy(), &auth_policy(), now)
+            .unwrap();
 
         let later = now + Duration::from_secs(200);
         let abandoned = mgr.expire_pending(later);
@@ -479,8 +516,12 @@ mod tests {
     fn terminating_a_session_abandons_only_its_own_prompts() {
         let mut mgr = ElevationManager::new();
         let now = Instant::now();
-        let a = mgr.begin(1, 100, 200, &policy(), &auth_policy(), now).unwrap();
-        let _b = mgr.begin(2, 101, 201, &policy(), &auth_policy(), now).unwrap();
+        let a = mgr
+            .begin(1, 100, 200, &policy(), &auth_policy(), now)
+            .unwrap();
+        let _b = mgr
+            .begin(2, 101, 201, &policy(), &auth_policy(), now)
+            .unwrap();
 
         let abandoned = mgr.abandon_session(1);
         assert_eq!(abandoned.len(), 1);
@@ -494,9 +535,13 @@ mod tests {
         let mut mgr = ElevationManager::new();
         let now = Instant::now();
         // conn 100 is the compositor for one pending request...
-        let a = mgr.begin(1, 100, 200, &policy(), &auth_policy(), now).unwrap();
+        let a = mgr
+            .begin(1, 100, 200, &policy(), &auth_policy(), now)
+            .unwrap();
         // ...and the requester for a different one.
-        let b = mgr.begin(2, 300, 100, &policy(), &auth_policy(), now).unwrap();
+        let b = mgr
+            .begin(2, 300, 100, &policy(), &auth_policy(), now)
+            .unwrap();
 
         let abandoned = mgr.abandon_connection(100);
         let ids: Vec<_> = abandoned.iter().map(|a| a.request_id).collect();
