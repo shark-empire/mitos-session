@@ -10,8 +10,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthOutcome {
     Success,
-    Failure { attempts_remaining: u32 },
-    LockedOut { retry_after_secs: u64 },
+    Failure {
+        attempts_remaining: u32,
+    },
+    LockedOut {
+        retry_after_secs: u64,
+    },
     Error(String),
     /// Whoever was answering explicitly declined rather than getting
     /// the credential wrong -- distinct from `Failure` so it never
