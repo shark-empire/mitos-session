@@ -24,7 +24,7 @@ path = "bin/mitos-sessionctl.rs"
 # Error handling
 anyhow = "1.0"
 
-sd-notify = "0.4"
+sd_notify = "0.4"
 # Same event-loop crate mitos-gui's Smithay compositor is built on.
 # Sharing it means one lightweight, non-async-runtime execution model
 # across MITOS's userspace daemons instead of pulling tokio into a
@@ -32,7 +32,7 @@ sd-notify = "0.4"
 
 calloop = { version = "0.12", features = ["signals"] }
 
-users = "0.11"
+
 # Thin safe wrappers over the POSIX bits we need: signals, passwd/group
 # lookups, uid/gid handling, socket peer credentials, reboot(2).
 nix = { version = "0.29", features = [
@@ -51,10 +51,6 @@ serde_json = "1"
 # Human-edited on-disk config only -- never on the IPC hot path.
 toml = "0.8"
 
-
-zeroize = { version = "1.8", features = ["alloc", "derive", "serde"] }
-
-
 thiserror = "1"
 
  #Async runtime (needed for signals, tasks, and async main)
@@ -67,8 +63,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # system's real account database instead of reimplementing password
 # checking.
 pam = "0.8"
-
-libc = "0.2"
 
 clap = { version = "4", features = ["derive"] }
 # Real device enumeration for seat::device (input + DRM nodes), instead
