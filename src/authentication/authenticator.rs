@@ -16,27 +16,31 @@ pub trait Authenticator {
 /// mechanism `login`, `sudo`, and every other real authenticator on
 /// the box uses -- mitos-session never sees a password hash itself.
 ///
-/// NOTE: the exact `pam` crate API surface used below (`with_password`,
-/// `conversation_mut().set_credentials`, `authenticate`,
-/// `open_session`) matches the common pattern for that crate, but this
-/// box has no network access to check it against whatever version
-/// `cargo update` actually resolves -- verify against the installed
-/// version before relying on this in anger.
+/// Only the credential is checked (`pam_authenticate` plus the account
+/// checks); no PAM *session* is opened. An unlock or elevation attempt
+/// is not a login, and opening one on every attempt would run
+/// session modules (lastlog, limits, mkhomedir, ...) each time.
+///
+/// NOTE: the `pam` calls below compile against the pinned crate (CI),
+/// but the conversation itself has not been exercised against a real
+/// PAM stack yet -- see README's Status section.
 pub struct PamAuthenticator {
     service: String,
+    allow_empty_password: bool,
 }
 
 impl PamAuthenticator {
     pub fn new(policy: &AuthPolicy) -> Self {
         Self {
             service: policy.pam_service.clone(),
+            allow_empty_password: policy.allow_empty_password,
         }
     }
 }
 
 impl Authenticator for PamAuthenticator {
     fn authenticate(&self, request: &AuthRequest) -> Result<()> {
-        if request.password.is_empty() {
+        if request.password.is_empty() && !self.allow_empty_password {
             return Err(SessionError::AuthFailed("empty password".into()));
         }
 
@@ -48,9 +52,6 @@ impl Authenticator for PamAuthenticator {
         client
             .authenticate()
             .map_err(|e| SessionError::AuthFailed(e.to_string()))?;
-        client
-            .open_session()
-            .map_err(|e| SessionError::Pam(e.to_string()))?;
         Ok(())
     }
 }

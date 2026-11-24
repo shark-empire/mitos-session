@@ -4,6 +4,7 @@
 //! re-declaring the protocol here.
 
 use clap::{Parser, Subcommand};
+use mitos_session::authentication::AuthOutcome;
 use mitos_session::config;
 use mitos_session::elevation::{ElevationAction, ElevationResponse, ElevationRisk};
 use mitos_session::errors::Result;
@@ -150,7 +151,8 @@ impl From<InhibitModeArg> for InhibitMode {
 
 fn main() -> ExitCode {
     match run(Cli::parse()) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::FAILURE,
         Err(e) => {
             eprintln!("mitos-sessionctl: {e}");
             ExitCode::FAILURE
@@ -158,7 +160,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> Result<()> {
+fn run(cli: Cli) -> Result<bool> {
     let socket_path = match cli.socket {
         Some(path) => path,
         None => config::load(None)?.ipc.socket_path,
@@ -242,8 +244,21 @@ fn run(cli: Cli) -> Result<()> {
         }
     };
 
-    print_response(client.call(request)?);
-    Ok(())
+    let response = client.call(request)?;
+    let success = is_success(&response);
+    print_response(response);
+    Ok(success)
+}
+
+/// Whether the daemon accepted the request -- decides the exit status,
+/// so scripts can tell a refused request or a wrong password apart from
+/// a successful one.
+fn is_success(response: &Response) -> bool {
+    match response {
+        Response::Error(_) => false,
+        Response::AuthResult(outcome) => *outcome == AuthOutcome::Success,
+        _ => true,
+    }
 }
 
 fn read_password() -> Result<String> {

@@ -1,9 +1,12 @@
 #![cfg(target_os = "linux")]
 
 use std::fs;
-use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
+use std::os::unix::fs::{symlink, MetadataExt};
+use std::time::Duration;
 
-use mitos_session::ipc::protocol::{read_message, write_message};
+use mitos_session::authentication::{check, AuthOutcome, AuthPolicy, AuthRequest, PamAuthenticator};
+use mitos_session::errors::SessionError;
+use mitos_session::ipc::{peer_credentials, read_message, write_message};
 use mitos_session::session::runtime::ensure_user_runtime_dir_in;
 use nix::unistd::{Gid, Uid};
 
@@ -14,6 +17,40 @@ fn running_as_root() -> bool {
 // ---------------------------------------------------------------------
 // XDG_RUNTIME_DIR tests
 // ---------------------------------------------------------------------
+
+#[test]
+fn runtime_dir_is_created_for_the_current_user_without_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path().join("user");
+
+    let uid = Uid::current();
+    let gid = Gid::current();
+
+    let dir = ensure_user_runtime_dir_in(&base, uid, gid).unwrap();
+
+    let meta = fs::metadata(&dir).unwrap();
+
+    assert!(meta.is_dir());
+    assert_eq!(meta.uid(), uid.as_raw());
+    assert_eq!(meta.gid(), gid.as_raw());
+    assert_eq!(meta.mode() & 0o777, 0o700);
+}
+
+#[test]
+fn runtime_dir_refuses_a_symlink_without_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path().join("user");
+    fs::create_dir_all(&base).unwrap();
+
+    let uid = Uid::current();
+    let gid = Gid::current();
+
+    let target = tmp.path().join("elsewhere");
+    fs::create_dir_all(&target).unwrap();
+    symlink(&target, base.join(uid.as_raw().to_string())).unwrap();
+
+    assert!(ensure_user_runtime_dir_in(&base, uid, gid).is_err());
+}
 
 #[test]
 #[ignore = "requires root"]
@@ -79,7 +116,8 @@ fn ipc_framing_roundtrip_small_messages() {
         let mut framed = Vec::new();
         write_message(&mut framed, &payload).unwrap();
 
-        let decoded: Vec<u8> = read_message(framed.as_slice()).unwrap();
+        let mut reader = framed.as_slice();
+        let decoded: Vec<u8> = read_message(&mut reader).unwrap();
 
         assert_eq!(payload, decoded);
     }
@@ -87,24 +125,20 @@ fn ipc_framing_roundtrip_small_messages() {
 
 #[test]
 fn ipc_framing_rejects_oversized_length_before_payload_allocation() {
-    // Must match MAX_MESSAGE_LEN in src/ipc/protocol.rs.
-    const MAX_MESSAGE_LEN: u32 = 16 * 1024 * 1024;
+    // A length prefix far beyond any sane limit and no payload behind
+    // it at all: the reader must refuse it up front instead of trying
+    // to allocate (or wait for) that many bytes.
+    let framed = u32::MAX.to_le_bytes();
+    let mut reader = framed.as_slice();
 
-    let mut framed = Vec::new();
-    framed.extend_from_slice(&(MAX_MESSAGE_LEN + 1).to_le_bytes());
+    let result: mitos_session::errors::Result<Vec<u8>> = read_message(&mut reader);
 
-    let result: mitos_session::errors::Result<Vec<u8>> = read_message(framed.as_slice());
-
-    assert!(result.is_err());
+    assert!(matches!(result, Err(SessionError::Protocol(_))));
 }
 
 #[test]
-#[ignore = "requires root"]
+#[ignore = "slow stress test; run with --ignored"]
 fn ipc_framing_stress_roundtrip() {
-    if !running_as_root() {
-        return;
-    }
-
     // Deterministic xorshift-style PRNG so the test is reproducible.
     struct Rng(u64);
 
@@ -128,7 +162,8 @@ fn ipc_framing_stress_roundtrip() {
         let mut framed = Vec::new();
         write_message(&mut framed, &payload).unwrap();
 
-        let decoded: Vec<u8> = read_message(framed.as_slice()).unwrap();
+        let mut reader = framed.as_slice();
+        let decoded: Vec<u8> = read_message(&mut reader).unwrap();
 
         assert_eq!(payload, decoded);
     }
@@ -139,20 +174,15 @@ fn ipc_framing_stress_roundtrip() {
 // ---------------------------------------------------------------------
 
 #[test]
-#[ignore = "requires root"]
 fn unix_socket_peer_credentials_are_available() {
-    if !running_as_root() {
-        return;
-    }
-
     use std::os::unix::net::UnixStream;
 
     let (a, _b) = UnixStream::pair().unwrap();
 
-    let (peer_uid, peer_gid) = nix::sys::socket::getpeereid(&a).unwrap();
+    let cred = peer_credentials(&a).unwrap();
 
-    assert_eq!(peer_uid, Uid::effective());
-    assert_eq!(peer_gid, Gid::effective());
+    assert_eq!(cred.uid, Uid::effective().as_raw());
+    assert_eq!(cred.gid, Gid::effective().as_raw());
 }
 
 #[test]
@@ -162,22 +192,28 @@ fn pam_authenticator_validates_real_user() {
         return;
     }
 
-    let auth = PamAuthenticator::new("mitos-login"); // Must match /etc/pam.d/mitos-login
-    let req = AuthRequest {
-        session_id: "test-session".into(),
-        user_name: "mitos-pam-test".into(),
-        password: ZeroizingString::from("correct_password"), // Use actual password
+    let policy = AuthPolicy {
+        pam_service: "mitos-login".into(), // Must match /etc/pam.d/mitos-login
+        allow_empty_password: false,
+        max_attempts: 3,
+        lockout: Duration::from_secs(30),
     };
+    let auth = PamAuthenticator::new(&policy);
+    let mut attempts = 0;
 
-    let outcome = auth.authenticate(&req).unwrap();
-    assert!(matches!(outcome, AuthOutcome::Success));
-
-    let bad_req = AuthRequest {
-        session_id: "test-session".into(),
+    let good_request = AuthRequest {
+        session_id: 1,
         user_name: "mitos-pam-test".into(),
-        password: ZeroizingString::from("wrong_password"),
+        password: "correct_password".into(), // Use actual password
     };
+    let outcome = check(&auth, &good_request, &policy, &mut attempts);
+    assert_eq!(outcome, AuthOutcome::Success);
 
-    let outcome = auth.authenticate(&bad_req).unwrap();
-    assert!(matches!(outcome, AuthOutcome::Failed));
+    let bad_request = AuthRequest {
+        session_id: 1,
+        user_name: "mitos-pam-test".into(),
+        password: "wrong_password".into(),
+    };
+    let outcome = check(&auth, &bad_request, &policy, &mut attempts);
+    assert!(matches!(outcome, AuthOutcome::Failure { .. }));
 }

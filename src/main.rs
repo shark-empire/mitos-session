@@ -40,7 +40,7 @@ fn run() -> Result<()> {
     tracing::info!("mitos-session starting");
 
     let default_seat = settings.seat.default_seat.clone();
-    let mut daemon = Daemon::new(settings);
+    let mut daemon = Daemon::new(settings, config_path);
     daemon.seats.ensure_seat(&default_seat);
     match seat::enumerate() {
         Ok(devices) => {
@@ -59,10 +59,25 @@ fn run() -> Result<()> {
         .map_err(|e| errors::SessionError::Protocol(format!("failed to create event loop: {e}")))?;
     let handle = event_loop.handle();
 
+    // Block the watched signals *before* any other thread exists. A
+    // signal blocked only on this thread is still delivered -- with its
+    // default, fatal action -- to any thread that doesn't block it, and
+    // `ipc::spawn` below starts such threads. They inherit this thread's
+    // signal mask only if it is already in place when they are created.
+    // Without this, SIGTERM or SIGHUP would kill the daemon outright
+    // instead of reaching the handlers registered further down.
+    let signal_source = calloop::signals::Signals::new(signals::WATCHED)
+        .map_err(|e| errors::SessionError::Io(std::io::Error::from(e)))?;
+
     // IPC: connection threads feed parsed requests into this channel;
     // the receiving half runs on this thread via calloop.
     let (cmd_tx, cmd_channel) = calloop::channel::channel::<ipc::ManagerMessage>();
     ipc::spawn(&daemon.socket_path, daemon.settings.ipc.socket_mode, cmd_tx)?;
+    if let Some(group) = &daemon.settings.ipc.socket_group {
+        if let Err(e) = ipc::set_socket_group(&daemon.socket_path, group) {
+            tracing::warn!(error = %e, group = %group, "could not set [ipc].socket_group");
+        }
+    }
     handle
         .insert_source(cmd_channel, |event, _, daemon: &mut Daemon| {
             if let calloop::channel::Event::Msg(msg) = event {
@@ -86,9 +101,6 @@ fn run() -> Result<()> {
             errors::SessionError::Protocol(format!("failed to register idle timer: {e}"))
         })?;
 
-    let signal_source = calloop::signals::Signals::new(signals::WATCHED)
-        .map_err(|e| errors::SessionError::Io(std::io::Error::from(e)))?;
-
     handle
         .insert_source(signal_source, |event, _, daemon: &mut Daemon| {
             if let Some(session_event) = signals::classify(event.signal()) {
@@ -106,7 +118,7 @@ fn run() -> Result<()> {
 
     while !daemon.should_exit {
         event_loop
-            .dispatch(Some(Duration::from_millis(500)), &mut daemon)
+            .dispatch(None, &mut daemon)
             .map_err(|e| errors::SessionError::Protocol(format!("event loop error: {e}")))?;
     }
 
@@ -127,11 +139,14 @@ struct Daemon {
     elevation: elevation::ElevationManager,
     power_backend: Box<dyn power::SystemPowerBackend>,
     socket_path: PathBuf,
+    /// The path given on the command line, if any, so a SIGHUP reload
+    /// re-reads that same file rather than the default search path.
+    config_path: Option<PathBuf>,
     should_exit: bool,
 }
 
 impl Daemon {
-    fn new(settings: config::Settings) -> Self {
+    fn new(settings: config::Settings, config_path: Option<PathBuf>) -> Self {
         let auth_policy = policy::auth_policy(&settings.authentication, &settings.lock);
         let authenticator = Box::new(authentication::PamAuthenticator::new(&auth_policy));
         let socket_path = settings.ipc.socket_path.clone();
@@ -155,6 +170,7 @@ impl Daemon {
             elevation,
             power_backend,
             socket_path,
+            config_path,
             should_exit: false,
         }
     }
@@ -358,6 +374,9 @@ impl Daemon {
                     .collect(),
             )),
             Request::Suspend => {
+                if !self.settings.power.allow_suspend {
+                    return Some(Response::Error("suspend is disabled in config".into()));
+                }
                 let lock_policy = lock::LockPolicy::from(&self.settings.lock);
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
                 Some(
@@ -375,6 +394,9 @@ impl Daemon {
                 )
             }
             Request::Reboot => {
+                if !self.settings.power.allow_reboot {
+                    return Some(Response::Error("reboot is disabled in config".into()));
+                }
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
                 Some(
                     match power::reboot(&mut self.sessions, &self.locks, &self.power_backend, grace)
@@ -385,6 +407,9 @@ impl Daemon {
                 )
             }
             Request::PowerOff => {
+                if !self.settings.power.allow_poweroff {
+                    return Some(Response::Error("poweroff is disabled in config".into()));
+                }
                 let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
                 Some(
                     match power::poweroff(
@@ -822,6 +847,9 @@ impl Daemon {
                     }
                 }
                 idle::IdleStage::SuspendRequested => {
+                    if !self.settings.power.allow_suspend {
+                        continue;
+                    }
                     let grace = Duration::from_secs(self.settings.power.suspend_inhibit_grace_secs);
                     if let Err(e) = power::suspend(
                         &self.sessions,
@@ -877,7 +905,7 @@ impl Daemon {
                 }
                 self.should_exit = true;
             }
-            signals::SignalEvent::ReloadConfig => match config::load(None) {
+            signals::SignalEvent::ReloadConfig => match config::load(self.config_path.as_deref()) {
                 Ok(new_settings) => {
                     let auth_policy =
                         policy::auth_policy(&new_settings.authentication, &new_settings.lock);

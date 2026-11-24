@@ -153,6 +153,13 @@ check below.
   `udev::MonitorSocket`'s raw fd wired into the calloop loop as its
   own event source, which is a bigger change than static enumeration
   and is still a follow-up.
+- `seat/monitor.rs` (a `udev::MonitorSocket` hotplug source for
+  calloop) and `launcher/autostart.rs` (an XDG `.desktop` autostart
+  parser) are drafts that are not declared in their `mod.rs` files, so
+  CI neither compiles nor formats them. Wire each in deliberately (and
+  give it tests) rather than by accident; `autostart.rs` in particular
+  still assumes a `User::groups` field and a direct `libc` dependency
+  that the crate does not have.
 - `user::groups` reads `/etc/group` directly rather than going through
   NSS, so directory-backed (LDAP/SSSD) accounts won't see their full
   supplementary group list.

@@ -17,7 +17,10 @@ use std::time::Instant;
 fn fake_user(uid: u32, home: &Path) -> User {
     User {
         uid: Uid::from_raw(uid),
-        gid: Gid::from_raw(uid),
+        // The primary gid plays no part in authorization. Use the test
+        // runner's own, so that `ensure_home_ready`'s chown succeeds
+        // without root even when no group shares the uid's number.
+        gid: Gid::current(),
         name: format!("user{uid}"),
         home: home.to_path_buf(),
         shell: PathBuf::from("/bin/sh"),

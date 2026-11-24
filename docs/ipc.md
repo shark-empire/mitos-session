@@ -1,7 +1,8 @@
 # IPC protocol
 
 mitos-session listens on a Unix domain socket (`[ipc].socket_path`,
-default `/run/mitos-session/session.sock`, mode `0660`). There is no
+default `/run/mitos-session/session.sock`, mode `0660`, group from
+`[ipc].socket_group`). There is no
 separate authentication handshake on the socket -- identity comes
 entirely from `SO_PEERCRED` (see `security.md`).
 
@@ -17,7 +18,7 @@ Every message, in both directions, is:
 
 Implemented in `ipc::protocol::{read_message, write_message}`. Clients
 write a `Request` and read a `Message`; the daemon does the reverse.
-Messages larger than 16 MiB are rejected outright (`SessionError::Protocol`)
+Messages larger than 1 MiB are rejected outright (`SessionError::Protocol`)
 rather than accepted -- there's no legitimate request or reply anywhere
 near that size, so a client claiming one is either broken or hostile.
 

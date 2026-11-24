@@ -115,6 +115,13 @@ The IPC socket is created mode `0660` (configurable via
 it can connect at all -- everyone else is refused at the filesystem
 level, before `SO_PEERCRED` even enters into it.
 
+The daemon runs as root, so by default that group is root's, and only
+root can connect. The compositor runs as the logged-in user and has to
+reach the socket, so set `[ipc].socket_group` to a group every desktop
+user belongs to; the daemon hands the socket to that group right after
+binding it. An unknown group name is logged as a warning and leaves the
+socket root-only (it never falls back to something looser).
+
 ## Lockout policy
 
 `[lock].max_auth_attempts` and `[lock].lockout_secs` bound brute-force

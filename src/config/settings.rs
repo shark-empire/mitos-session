@@ -114,6 +114,12 @@ pub struct PowerSettings {
 pub struct IpcSettings {
     pub socket_path: PathBuf,
     pub socket_mode: u32,
+    /// Group that owns the socket, so its members can connect when
+    /// `socket_mode` grants group access (the default, `0660`, does).
+    /// Unset leaves the socket in root's group, which means only root
+    /// can connect. The compositor runs as the logged-in user, so on a
+    /// normal desktop this must name a group those users belong to.
+    pub socket_group: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

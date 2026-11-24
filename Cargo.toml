@@ -21,15 +21,14 @@ path = "bin/mitos-sessionctl.rs"
 
 [dependencies]
 
-# Error handling
-anyhow = "1.0"
-
 sd-notify = "0.4"
+
 # Same event-loop crate mitos-gui's Smithay compositor is built on.
 # Sharing it means one lightweight, non-async-runtime execution model
 # across MITOS's userspace daemons instead of pulling tokio into a
-# second process tree just for this one.
-
+# second process tree just for this one. There is deliberately no async
+# runtime in this crate: nothing here is async, and one would only add
+# build time and resident memory.
 calloop = { version = "0.12", features = ["signals"] }
 
 
@@ -38,6 +37,10 @@ calloop = { version = "0.12", features = ["signals"] }
 nix = { version = "0.29", features = [
     "signal", "user", "process", "fs", "socket", "poll", "reboot", "hostname",
 ] }
+
+# `sync(2)` before a direct reboot/poweroff (see power::DirectBackend).
+# Already part of the build as a dependency of nix.
+libc = "0.2"
 
 serde = { version = "1", features = ["derive"] }
 # Compact binary framing for the IPC protocol. Smaller and faster to
@@ -52,9 +55,6 @@ serde_json = "1"
 toml = "0.8"
 
 thiserror = "1"
-
- #Async runtime (needed for signals, tasks, and async main)
-tokio = { version = "1.38", features = ["full", "signal", "sync", "macros", "rt-multi-thread"] }
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
@@ -75,9 +75,15 @@ udev = "0.8"
 [dev-dependencies]
 tempfile = "3"
 
+# Tuned for a small resident footprint: this daemon is idle almost all of
+# the time, so a smaller, faster-to-load binary matters far more than peak
+# throughput.
 [profile.release]
-opt-level = 3
+opt-level = "s"
 lto = true
 codegen-units = 1
 strip = true
-panic = "unwind"   # a bad request handler should not be able to take the whole daemon down
+# Unwind, not abort: each IPC connection runs on its own thread, and a
+# panic in one connection's handler should end only that connection,
+# not take the whole daemon (and every session it supervises) with it.
+panic = "unwind"

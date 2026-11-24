@@ -8,9 +8,11 @@ use std::io::{Read, Write};
 /// replies and events to the right socket.
 pub type ConnId = u64;
 
-/// Generous enough for a full session/inhibitor listing, nowhere near
-/// enough for a client to use as a memory-exhaustion vector.
-const MAX_MESSAGE_LEN: u32 = 16 * 1024 * 1024;
+/// Generous enough for a full session/inhibitor listing (thousands of
+/// entries), nowhere near enough for a client to use as a
+/// memory-exhaustion vector: this much is allocated up front for every
+/// message a client announces.
+const MAX_MESSAGE_LEN: u32 = 1024 * 1024;
 
 /// Write one length-prefixed, bincode-encoded message: a 4-byte
 /// little-endian length followed by that many payload bytes.

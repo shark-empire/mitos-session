@@ -54,13 +54,13 @@ impl Environment {
 
     /// Create `XDG_RUNTIME_DIR` with the `0700` permissions the XDG
     /// Base Directory spec requires, owned by the session's user.
+    /// Symlinks are refused and ownership/permissions are applied
+    /// through a file descriptor rather than by path -- see
+    /// `session::runtime`.
     pub fn ensure_runtime_dir(path: &Path, user: &User) -> Result<()> {
-        use std::fs;
-        use std::os::unix::fs::PermissionsExt;
-
-        fs::create_dir_all(path)?;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-        std::os::unix::fs::chown(path, Some(user.uid.as_raw()), Some(user.gid.as_raw()))?;
+        let base = path.parent().unwrap_or(Path::new("/"));
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        super::runtime::ensure_named_runtime_dir(base, name, user.uid, user.gid)?;
         Ok(())
     }
 }

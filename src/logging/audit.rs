@@ -2,7 +2,8 @@ use crate::config::LoggingSettings;
 use serde::Serialize;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -52,8 +53,15 @@ impl AuditEvent {
 static AUDIT_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Point future `audit_log` calls at `settings.audit_log_path`. Called
-/// once at startup after config is loaded.
+/// at startup after config is loaded, and again on every config reload.
+/// Also makes sure the log's directory exists: a fresh image has no
+/// `/var/log/mitos` yet, and without it every event would fail to write.
 pub fn configure_audit_log(settings: &LoggingSettings) {
+    if let Some(dir) = settings.audit_log_path.as_deref().and_then(Path::parent) {
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            tracing::warn!(error = %e, dir = %dir.display(), "could not create audit log directory");
+        }
+    }
     if let Ok(mut guard) = AUDIT_PATH.lock() {
         *guard = settings.audit_log_path.clone();
     }
@@ -80,13 +88,20 @@ pub fn audit_log(event: AuditEvent) {
         }
     };
 
+    // 0600: the log names accounts and the apps asking for elevation.
     let result = OpenOptions::new()
         .create(true)
         .append(true)
+        .mode(0o600)
         .open(&path)
         .and_then(|mut f| writeln!(f, "{line}"));
 
     if let Err(e) = result {
-        tracing::error!(error = %e, path = %path.display(), "failed to write audit log entry");
+        tracing::error!(
+            error = %e,
+            path = %path.display(),
+            ?event,
+            "failed to write audit log entry"
+        );
     }
 }

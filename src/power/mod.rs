@@ -51,6 +51,25 @@ pub trait SystemPowerBackend {
     fn reboot(&self) -> Result<()>;
 }
 
+/// Lets the `Box<dyn SystemPowerBackend>` that `PowerBackendKind::make`
+/// returns be passed anywhere a `&dyn SystemPowerBackend` is expected
+/// (`power::suspend(.., &self.power_backend, ..)` and friends). Without
+/// this the compiler can unsize a concrete backend into a trait object
+/// but has no way to do the same for a box that already holds one.
+impl<T: SystemPowerBackend + ?Sized> SystemPowerBackend for Box<T> {
+    fn suspend(&self) -> Result<()> {
+        (**self).suspend()
+    }
+
+    fn poweroff(&self) -> Result<()> {
+        (**self).poweroff()
+    }
+
+    fn reboot(&self) -> Result<()> {
+        (**self).reboot()
+    }
+}
+
 /// `[power].backend` in `session.toml`. Defaults to `MitosPower` -- see
 /// the module doc comment above for why routing the actual kernel
 /// transition through mitos-power, rather than duplicating it here, is
@@ -89,16 +108,64 @@ impl SystemPowerBackend for DirectBackend {
     }
 
     fn poweroff(&self) -> Result<()> {
-        // On success this call does not return -- the machine powers
-        // off. `Ok(())` below only ever executes if that somehow isn't
-        // true, which would itself indicate something worth a bug
-        // report against nix/the kernel, not this code.
-        nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_POWER_OFF)?;
-        Ok(())
+        flush_filesystems();
+        // On success this call never returns -- the machine powers
+        // off. nix types that as `Result<Infallible>`, so the only
+        // value this function can ever hand back is the error.
+        match nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_POWER_OFF) {
+            Ok(never) => match never {},
+            Err(e) => Err(e.into()),
+        }
     }
 
     fn reboot(&self) -> Result<()> {
-        nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_AUTOBOOT)?;
-        Ok(())
+        flush_filesystems();
+        match nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_AUTOBOOT) {
+            Ok(never) => match never {},
+            Err(e) => Err(e.into()),
+        }
+    }
+}
+
+/// Ask the kernel to write every dirty page back to disk. `reboot(2)`
+/// stops the machine without doing this itself, so a `direct` poweroff
+/// or reboot would otherwise be free to lose recently written data.
+fn flush_filesystems() {
+    // SAFETY: sync(2) takes no arguments, touches none of this
+    // process's memory, and has no failure mode.
+    unsafe { libc::sync() };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Noop;
+
+    impl SystemPowerBackend for Noop {
+        fn suspend(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn poweroff(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn reboot(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn takes_trait_object(backend: &dyn SystemPowerBackend) -> Result<()> {
+        backend.suspend()
+    }
+
+    /// `Daemon` keeps its backend as a `Box<dyn SystemPowerBackend>` and
+    /// hands `&self.power_backend` to `power::suspend` and friends, which
+    /// take `&dyn SystemPowerBackend`.
+    #[test]
+    fn a_boxed_backend_can_be_passed_as_a_trait_object() {
+        let boxed: Box<dyn SystemPowerBackend> = Box::new(Noop);
+        takes_trait_object(&boxed).unwrap();
     }
 }

@@ -1,134 +1,101 @@
-use std::fs;
-use std::os::fd::AsRawFd;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
-use anyhow::Result;
+//! Secure creation of per-user runtime directories (`XDG_RUNTIME_DIR`).
+//!
+//! Ownership and permission changes are made through an `O_NOFOLLOW`
+//! directory file descriptor rather than by path, so a symlink swapped
+//! in at the last moment cannot redirect them.
 
-use anyhow::{bail, Context, Result};
+use crate::errors::{Result, SessionError};
+use nix::errno::Errno;
+use nix::fcntl::OFlag;
 use nix::unistd::{Gid, Uid};
+use std::fs;
+use std::os::unix::fs::{fchown, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
-/// Prepare the canonical user runtime directory:
+/// Prepare the standard user runtime directory, `/run/user/<uid>`.
 ///
-/// `/run/user/<uid>`
-///
-/// This is the production entrypoint used by the daemon.
+/// The daemon itself places runtime directories under
+/// `[session].runtime_dir` (see [`ensure_user_runtime_dir_in`]); this is
+/// the same logic pointed at the conventional location.
 pub fn ensure_user_runtime_dir(uid: Uid, gid: Gid) -> Result<PathBuf> {
     ensure_user_runtime_dir_in(Path::new("/run/user"), uid, gid)
 }
 
 /// Same as [`ensure_user_runtime_dir`], but with a configurable base.
 ///
-/// This exists primarily so integration tests can exercise the exact
-/// same logic against a temporary directory instead of `/run/user`.
+/// `session::lifecycle::begin` reaches this (through
+/// `Environment::ensure_runtime_dir`) with `[session].runtime_dir`, and
+/// the integration tests exercise it against a temporary directory.
 pub fn ensure_user_runtime_dir_in(base: &Path, uid: Uid, gid: Gid) -> Result<PathBuf> {
     ensure_named_runtime_dir(base, &uid.as_raw().to_string(), uid, gid)
 }
 
-/// Securely create:
-///
-/// `<base>/<name>`
+/// Securely create `<base>/<name>`.
 ///
 /// Requirements enforced:
 ///
-/// - base directory must exist as a real directory, not a symlink
-/// - `<base>/<name>` must be a real directory
-/// - symlinks at `<base>/<name>` are refused
+/// - `base` must be a real directory, not a symlink
+/// - `<base>/<name>` must be a real directory; a symlink there is refused
 /// - ownership is locked to `(uid, gid)`
 /// - permissions are locked to `0700`
 ///
-/// The final ownership/permission checks are done through an
+/// The final ownership/permission changes and checks go through an
 /// `O_NOFOLLOW` directory file descriptor, not through path-based
 /// operations that could race with symlink replacement.
 pub fn ensure_named_runtime_dir(base: &Path, name: &str, uid: Uid, gid: Gid) -> Result<PathBuf> {
     if name.is_empty() || name == "." || name == ".." || name.contains('/') {
-        bail!("invalid runtime directory name: {name:?}");
+        let message = format!("invalid runtime directory name: {name:?}");
+        return Err(SessionError::Config(message));
     }
 
     prepare_base(base)?;
 
     let runtime_dir = base.join(name);
 
-    // Best-effort create. If it already exists, we still validate it
+    // Best-effort create. If it already exists, it is still validated
     // through an O_NOFOLLOW descriptor below.
     match fs::create_dir(&runtime_dir) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(e) => {
-            return Err(e).context("failed to create runtime directory");
-        }
+        Err(e) => return Err(io_context("failed to create runtime directory")(e)),
     }
 
     // Open the directory itself, refusing symlinks.
+    let flags = OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
     let dir = fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .custom_flags(flags.bits())
         .open(&runtime_dir)
-        .map_err(|e| {
-            if e.raw_os_error() == Some(libc::ELOOP) {
-                anyhow::anyhow!(
-                    "runtime directory path {} is a symlink; refusing",
-                    runtime_dir.display()
-                )
-            } else {
-                anyhow::Error::from(e)
-            }
-        })
-        .context("failed to open runtime directory securely")?;
+        .map_err(|e| open_error(&runtime_dir, e))?;
 
     let meta = dir
         .metadata()
-        .context("failed to fstat runtime directory")?;
+        .map_err(io_context("failed to fstat runtime directory"))?;
 
     if !meta.is_dir() {
-        bail!(
-            "runtime path {} exists but is not a directory",
-            runtime_dir.display()
-        );
+        let message = format!("{} is not a directory", runtime_dir.display());
+        return Err(refuse(message));
     }
 
     // Lock ownership and permissions through the descriptor.
-    unsafe {
-        if libc::fchown(dir.as_raw_fd(), uid.as_raw(), gid.as_raw()) != 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("failed to fchown runtime directory");
-        }
+    fchown(&dir, Some(uid.as_raw()), Some(gid.as_raw()))
+        .map_err(io_context("failed to fchown runtime directory"))?;
+    dir.set_permissions(fs::Permissions::from_mode(0o700))
+        .map_err(io_context("failed to fchmod runtime directory"))?;
 
-        if libc::fchmod(dir.as_raw_fd(), 0o700 as libc::mode_t) != 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("failed to fchmod runtime directory");
-        }
-    }
-
-    // Prove final state through the same descriptor.
+    // Prove the final state through the same descriptor.
     let meta = dir
         .metadata()
-        .context("failed to re-stat runtime directory after permission fix")?;
+        .map_err(io_context("failed to re-stat runtime directory"))?;
 
-    if meta.uid() != uid.as_raw() {
-        bail!(
-            "runtime directory {} has uid {}, expected {}",
-            runtime_dir.display(),
-            meta.uid(),
-            uid.as_raw()
+    let owned = meta.uid() == uid.as_raw() && meta.gid() == gid.as_raw();
+    if !owned || meta.mode() & 0o777 != 0o700 {
+        let message = format!(
+            "{} ended up with an unexpected owner or mode",
+            runtime_dir.display()
         );
-    }
-
-    if meta.gid() != gid.as_raw() {
-        bail!(
-            "runtime directory {} has gid {}, expected {}",
-            runtime_dir.display(),
-            meta.gid(),
-            gid.as_raw()
-        );
-    }
-
-    if meta.mode() & 0o777 != 0o700 {
-        bail!(
-            "runtime directory {} has mode {:#o}, expected 0700",
-            runtime_dir.display(),
-            meta.mode() & 0o777
-        );
+        return Err(refuse(message));
     }
 
     info!(
@@ -141,24 +108,28 @@ pub fn ensure_named_runtime_dir(base: &Path, name: &str, uid: Uid, gid: Gid) -> 
     Ok(runtime_dir)
 }
 
+/// Make sure `base` exists as a real (non-symlink) directory that
+/// everyone can traverse but nobody but root can write to.
 fn prepare_base(base: &Path) -> Result<()> {
     if !base.exists() {
-        fs::create_dir_all(base).context("failed to create runtime base directory")?;
+        fs::create_dir_all(base).map_err(io_context("failed to create runtime base directory"))?;
     }
 
-    let meta = fs::symlink_metadata(base).context("failed to inspect runtime base directory")?;
+    let meta = fs::symlink_metadata(base)
+        .map_err(io_context("failed to inspect runtime base directory"))?;
 
     if meta.file_type().is_symlink() {
-        bail!("runtime base {} is a symlink; refusing", base.display());
+        let message = format!("runtime base {} is a symlink", base.display());
+        return Err(refuse(message));
     }
 
     if !meta.is_dir() {
-        bail!("runtime base {} is not a directory", base.display());
+        let message = format!("runtime base {} is not a directory", base.display());
+        return Err(refuse(message));
     }
 
-    // The base should be traversable but not writable by normal users.
     fs::set_permissions(base, fs::Permissions::from_mode(0o755))
-        .context("failed to set permissions on runtime base directory")?;
+        .map_err(io_context("failed to set runtime base permissions"))?;
 
     debug!(path = %base.display(), "runtime base directory prepared");
 
@@ -169,18 +140,48 @@ fn prepare_base(base: &Path) -> Result<()> {
 pub fn scrub_session_artifacts(runtime_dir: &Path) -> Result<()> {
     let mitos_dir = runtime_dir.join("mitos-session");
     if mitos_dir.exists() {
-        fs::remove_dir_all(&mitos_dir).ok();
+        let _ = fs::remove_dir_all(&mitos_dir);
     }
 
-    // Remove standard Wayland/X11 sockets that might be left behind
-    let sockets = ["wayland-0", "wayland-0.lock", "X0", "X0-lock", "mitos-session.sock"];
-    for sock in sockets {
-        let p = runtime_dir.join(sock);
-        if p.exists() {
-            fs::remove_file(p).ok();
+    // Standard Wayland/X11 sockets that might be left behind.
+    let sockets = [
+        "wayland-0",
+        "wayland-0.lock",
+        "X0",
+        "X0-lock",
+        "mitos-session.sock",
+    ];
+    for socket in sockets {
+        let path = runtime_dir.join(socket);
+        if path.exists() {
+            let _ = fs::remove_file(path);
         }
     }
 
-    tracing::info!(path = %runtime_dir.display(), "scrubbed stale session artifacts");
+    info!(path = %runtime_dir.display(), "scrubbed stale session artifacts");
     Ok(())
+}
+
+/// Attach `context` to an I/O error, keeping its `ErrorKind` so callers
+/// can still match on it.
+fn io_context(context: &'static str) -> impl FnOnce(std::io::Error) -> SessionError {
+    move |e| SessionError::Io(std::io::Error::new(e.kind(), format!("{context}: {e}")))
+}
+
+/// A refusal to touch something that isn't what it should be: a symlink
+/// where a directory belongs, a directory with the wrong owner, ...
+fn refuse(message: String) -> SessionError {
+    SessionError::PermissionDenied(message)
+}
+
+/// Turn a failed `O_NOFOLLOW | O_DIRECTORY` open into the right error:
+/// a symlink (or anything else that isn't a plain directory) is
+/// refused, every other failure is just an I/O error.
+fn open_error(path: &Path, e: std::io::Error) -> SessionError {
+    let code = e.raw_os_error();
+    if code == Some(Errno::ELOOP as i32) || code == Some(Errno::ENOTDIR as i32) {
+        let message = format!("{} is a symlink or not a directory", path.display());
+        return refuse(message);
+    }
+    io_context("failed to open runtime directory securely")(e)
 }

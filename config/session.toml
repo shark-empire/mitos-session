@@ -66,6 +66,10 @@ mitos_power_socket_path = "/run/mitos/power.sock"
 [ipc]
 socket_path = "/run/mitos-session/session.sock"
 socket_mode = 0o660
+# Group that owns the socket. The compositor (mitos-gui) runs as the
+# logged-in user and has to be able to connect, so name a group every
+# desktop user belongs to. Left unset, only root can connect.
+# socket_group = "mitos"
 
 [logging]
 level = "info"

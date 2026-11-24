@@ -1,4 +1,25 @@
-2. Integration by Project
+# Integrating with mitos-session
+
+## 1. Boot checklist
+
+What the image has to provide before mitos-services starts `mitos-session`.
+
+| Needs | Why |
+|---|---|
+| Started as **root** by mitos-services | It drops privileges itself, per session, when it launches the compositor. It reports readiness with `sd_notify` (`READY=1`) once its socket is bound. |
+| `/run` writable (tmpfs) | The IPC socket (`/run/mitos-session/session.sock`) and each user's `XDG_RUNTIME_DIR` (`/run/mitos-session/<uid>`) are created there. |
+| `/etc/pam.d/mitos-session` and `/etc/pam.d/mitos-elevate` | PAM services for lock-screen unlock and elevation prompts. Samples are in `config/pam.d/`. |
+| A group every desktop user belongs to, named in `[ipc].socket_group` | The compositor runs as the logged-in user and must reach the socket. Left unset, only root can connect. |
+| `libpam.so.0` and `libudev.so.1` | Dynamic dependencies of the binary (PAM checks, device enumeration). |
+| `mitos-gui` at `[session].compositor_binary` (default `/usr/bin/mitos-gui`) | Spawned for every non-tty session. |
+| mitos-power listening on `[power].mitos_power_socket_path`, **or** `[power].backend = "direct"` | The default power backend asks mitos-power to do the actual suspend/reboot/poweroff. |
+| An account named by `[elevation].service_user` (default `mitos-service`) | Only that account, or root, may open elevation prompts. |
+| `/etc/mitos/session.toml` | Optional. Every key has a compiled-in default; `config/session.toml` lists them. |
+
+`/var/log/mitos` (audit log) is created on startup if it is missing.
+Send `SIGHUP` to re-read the config file the daemon was started with.
+
+## 2. Integration by project
 🖥️  mitos-gui  (The Compositor & Shell)
  mitos-gui  is the most critical client. It manages the Wayland display, renders the lock screen, and handles input routing.
 Lifecycle:
@@ -40,13 +61,13 @@ Workflow:
 
 
 
-4. API Reference Summary
+## 3. API reference summary
 Requests (Client -> Daemon)
 	•	 CreateSession { user_name, seat_id, session_type } 
 	•	 TerminateSession { session_id } 
 	•	 RegisterCompositor { session_id } 
 	•	 LockSession { session_id } 
-	•	 Unlock { session_id, user_name, password }  (Note: Password is  ZeroizingString )
+	•	 Unlock { session_id, user_name, password }  (Note: the password is a plain  String  on the wire -- clients should clear it from memory as soon as it has been sent)
 	•	 CheckPermission { session_id, app_uid, permission } 
 	•	 RequestElevation { session_id, action } 
 	•	 RespondElevation { request_id, response } 

@@ -14,4 +14,4 @@ pub use client::IpcClient;
 pub use messages::{Event, InhibitorInfo, Message, Request, Response, SessionInfo};
 pub use permissions::{is_root, peer_credentials, PeerCred};
 pub use protocol::{read_message, write_message, ConnId};
-pub use server::{spawn, ConnRegistry, ManagerCommand, ManagerMessage};
+pub use server::{set_socket_group, spawn, ConnRegistry, ManagerCommand, ManagerMessage};

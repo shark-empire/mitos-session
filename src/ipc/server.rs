@@ -7,9 +7,10 @@ use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 /// One parsed request from a connection, on its way to the calloop
 /// thread that owns all daemon state.
@@ -71,6 +72,35 @@ impl ConnRegistry {
 
 static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Most IPC connections allowed open at once. Every connection costs
+/// two threads, so without a cap a misbehaving local client could use
+/// up threads and memory just by opening sockets.
+const MAX_CONNECTIONS: usize = 128;
+
+static LIVE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// Counts one open connection against `MAX_CONNECTIONS` for as long as
+/// it is alive, and gives the slot back on drop however the connection
+/// ends -- including a thread that never got to start.
+struct ConnectionSlot;
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        LIVE_CONNECTIONS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Give the IPC socket to `group` (root stays the owning user), so that
+/// members of that group can connect when `socket_mode` allows group
+/// access. An unknown group is an error rather than a silent fallback:
+/// a typo should be noticed, not quietly leave the socket root-only.
+pub fn set_socket_group(socket_path: &Path, group: &str) -> Result<()> {
+    let found = nix::unistd::Group::from_name(group)?;
+    let entry = found.ok_or_else(|| SessionError::Config(format!("no such group: {group}")))?;
+    std::os::unix::fs::chown(socket_path, None, Some(entry.gid.as_raw()))?;
+    Ok(())
+}
+
 /// Bind the IPC socket and start accepting connections. Each accepted
 /// connection gets a reader thread (blocking `read_message` loop,
 /// forwarding parsed requests to `cmd_tx`) and a writer thread
@@ -98,17 +128,39 @@ pub fn spawn(socket_path: &Path, mode: u32, cmd_tx: LoopSender<ManagerMessage>) 
 
 fn accept_loop(listener: UnixListener, cmd_tx: LoopSender<ManagerMessage>) {
     for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                let cmd_tx = cmd_tx.clone();
-                thread::spawn(move || handle_connection(stream, cmd_tx));
+        let stream = match stream {
+            Ok(stream) => stream,
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to accept IPC connection");
+                // Out of file descriptors and the like: back off instead
+                // of spinning on the same error.
+                thread::sleep(Duration::from_millis(50));
+                continue;
             }
-            Err(e) => tracing::warn!(error = %e, "failed to accept IPC connection"),
+        };
+
+        if LIVE_CONNECTIONS.fetch_add(1, Ordering::Relaxed) >= MAX_CONNECTIONS {
+            LIVE_CONNECTIONS.fetch_sub(1, Ordering::Relaxed);
+            tracing::warn!(max = MAX_CONNECTIONS, "IPC connection limit reached");
+            continue;
+        }
+
+        let slot = ConnectionSlot;
+        let cmd_tx = cmd_tx.clone();
+        let spawned = thread::Builder::new()
+            .name("mitos-session-ipc-conn".into())
+            .spawn(move || handle_connection(stream, cmd_tx, slot));
+        if let Err(e) = spawned {
+            tracing::warn!(error = %e, "failed to start an IPC connection thread");
         }
     }
 }
 
-fn handle_connection(stream: UnixStream, cmd_tx: LoopSender<ManagerMessage>) {
+fn handle_connection(
+    stream: UnixStream,
+    cmd_tx: LoopSender<ManagerMessage>,
+    _slot: ConnectionSlot,
+) {
     let conn_id = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
     let peer = match peer_credentials(&stream) {
         Ok(p) => p,
@@ -143,13 +195,25 @@ fn handle_connection(stream: UnixStream, cmd_tx: LoopSender<ManagerMessage>) {
         return; // daemon is shutting down
     }
 
-    let writer_handle = thread::spawn(move || {
-        for msg in out_rx {
-            if write_message(&mut writer, &msg).is_err() {
-                break;
+    let writer_thread = thread::Builder::new()
+        .name("mitos-session-ipc-writer".into())
+        .spawn(move || {
+            for msg in out_rx {
+                if write_message(&mut writer, &msg).is_err() {
+                    break;
+                }
             }
+        });
+    let writer_handle = match writer_thread {
+        Ok(handle) => handle,
+        Err(e) => {
+            tracing::warn!(error = %e, conn_id, "failed to start an IPC writer thread");
+            // The daemon already registered this connection above, so
+            // tell it to forget the connection again.
+            let _ = cmd_tx.send(ManagerMessage::Disconnected { conn_id });
+            return;
         }
-    });
+    };
 
     loop {
         match read_message::<_, Request>(&mut reader) {
@@ -171,7 +235,13 @@ fn handle_connection(stream: UnixStream, cmd_tx: LoopSender<ManagerMessage>) {
         }
     }
 
-    drop(out_tx); // lets the writer thread's `for msg in out_rx` end
-    let _ = writer_handle.join();
+    // Wind down in this order. The daemon's `ConnRegistry` holds a clone
+    // of this connection's outbox, and the writer thread only ends once
+    // every sender is gone -- so the daemon has to hear about the
+    // disconnect (and drop its clone) *before* the writer is joined.
+    // Joining first would wait forever and leak both threads.
+    drop(out_tx);
+    let _ = reader.shutdown(std::net::Shutdown::Both); // unblocks a stuck write
     let _ = cmd_tx.send(ManagerMessage::Disconnected { conn_id });
+    let _ = writer_handle.join();
 }

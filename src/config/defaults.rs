@@ -96,6 +96,7 @@ impl Default for IpcSettings {
         Self {
             socket_path: PathBuf::from("/run/mitos-session/session.sock"),
             socket_mode: 0o660,
+            socket_group: None,
         }
     }
 }

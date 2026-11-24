@@ -1,0 +1,9 @@
+#%PAM-1.0
+# PAM service for mitos-session's lock-screen unlock checks
+# (`[authentication].pam_service`). Install as /etc/pam.d/mitos-session.
+#
+# This only proves that the person at a locked screen knows the
+# logged-in user's password. It is not a login: mitos-session never
+# opens a PAM session here, so no session modules are needed.
+auth     required   pam_unix.so
+account  required   pam_unix.so
