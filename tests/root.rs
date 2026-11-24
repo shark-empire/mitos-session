@@ -4,7 +4,9 @@ use std::fs;
 use std::os::unix::fs::{symlink, MetadataExt};
 use std::time::Duration;
 
-use mitos_session::authentication::{check, AuthOutcome, AuthPolicy, AuthRequest, PamAuthenticator};
+use mitos_session::authentication::{
+    check, AuthOutcome, AuthPolicy, AuthRequest, PamAuthenticator,
+};
 use mitos_session::errors::SessionError;
 use mitos_session::ipc::{peer_credentials, read_message, write_message};
 use mitos_session::session::runtime::ensure_user_runtime_dir_in;
